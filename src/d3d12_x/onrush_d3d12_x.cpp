@@ -1012,8 +1012,10 @@ static void PollAltEnterToggle() {
   s_wasDown = down;
 }
 
+namespace mouse { static bool OnMessage(HWND, UINT, WPARAM, LPARAM, LRESULT *); static void Update(bool focused); }   // mouse.inc
 static LRESULT CALLBACK DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                           LPARAM lParam) {
+  { LRESULT r = 0; if (mouse::OnMessage(hwnd, msg, wParam, lParam, &r)) return r; }
   switch (msg) {
   case WM_ACTIVATE:
   case WM_ACTIVATEAPP:
@@ -4350,6 +4352,7 @@ static void PollInput(RawGamepadReading *pReading) {
   pReading->RightThumbstickY = 0.0f;
 
   const bool focused = GameWindowFocused();
+  mouse::Update(focused);
 
   XINPUT_STATE_RAW xstate = {};
   if (focused && ReadXInput(&xstate)) {
@@ -7285,6 +7288,7 @@ static void PatchBootDoneFlag(HMODULE hExe) {
 
 #include "gfx_options.inc"
 #include "cameras.inc"
+#include "mouse.inc"
 #include "language.inc"
 namespace ups { static void Install(HMODULE hExe); }   // upscaler.inc
 
@@ -7690,6 +7694,7 @@ static void PatchAllocThunk(HMODULE hExe) {
   PatchBootDoneFlag(hExe);
   gfxopt::Install(hExe);
   cams::Install(hExe);
+  mouse::Install(hExe);
   lang::Install(hExe);
   ups::Install(hExe);
   PatchSkipOnlineWait(hExe);
