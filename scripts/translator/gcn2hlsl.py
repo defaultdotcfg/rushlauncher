@@ -420,6 +420,22 @@ class Tr:
             # andn2 every iteration and killed every lane at once (clustered light/probe lists came out empty). NO_LOOP_SIF=1 = old.
             loop_sif = (not structured and lps and not _ENV.get('NO_LOOP_SIF') and op in ('s_cbranch_scc0', 's_cbranch_scc1')
                         and tgt(args) is not None and P < tgt(args) <= lps[-1][1] and (not gates or tgt(args) <= gates[-1][0]))
+            # CS (predicated mode): a forward s_cbranch_vccz/vccnz skips its block only when NO lane of the wave has vcc set; run
+            # predicated, the block ran even when the branch was taken, and an `s_branch` over an else side let that side always
+            # overwrite the result (SH ambient without haze, sky/fog raymarch results replaced by 0/1). Structured with the
+            # wave-level test (or the whole 64-thread group, = one GCN wave, where a group barrier is safe). NO_CS_VCC_SIF=1 = old.
+            vcc_sif = (not structured and not loop_sif and self.kind == 'cs' and not _ENV.get('NO_CS_VCC_SIF')
+                       and op in ('s_cbranch_vccz', 's_cbranch_vccnz'))
+            if vcc_sif:
+                T = tgt(args)
+                if (T is not None and T > P and (not blk or T <= blk[-1][0]) and (not gates or T <= gates[-1][0])
+                        and (not lps or T <= lps[-1][1]) and not any(P < h_ < T <= t_ for h_, t_ in heads.items())):
+                    grp64 = (lambda tg_: tg_[0] * tg_[1] * tg_[2] == 64)(self.decls.get('tg', (1, 1, 1)))
+                    wave = not (grp64 and not lps and all(not b_[4] for b_ in blk if len(b_) > 4))
+                    if wave: cond = 'WaveActiveAnyTrue(vcc)' if op == 's_cbranch_vccz' else '!WaveActiveAnyTrue(vcc)'
+                    else: cond = 'any64_(vcc, flat)' if op == 's_cbranch_vccz' else '!any64_(vcc, flat)'; self.uses_any64 = True
+                    self.emit(f"[branch] if ({cond}) {{   // {op} {args}")
+                    blk.append([T, len(self.body) - 1, [], (dict(self.sym), dict(self.cval), dict(self.sg), dict(self.origin)), wave]); continue
             if (structured or loop_sif) and (op in ('s_cbranch_scc0', 's_cbranch_scc1') or ((_ENV.get('SCALAR_IF_VCC') or SIF_FORCE) and op in ('s_cbranch_vccz', 's_cbranch_vccnz'))):
                 T = tgt(args)
                 uniform = True
@@ -432,7 +448,7 @@ class Tr:
                     if SIF_ANY64 and self.kind == 'cs' and op.startswith('s_cbranch_vcc') and (lambda tg_: tg_[0] * tg_[1] * tg_[2] == 64)(self.decls.get('tg', (1, 1, 1))):
                         cond = 'any64_(vcc, flat)' if op == 's_cbranch_vccz' else '!any64_(vcc, flat)'; self.uses_any64 = True
                     self.emit(f"[branch] if ({cond}) {{   // {op} {args}"); blk.append([T, len(self.body) - 1, [], (dict(self.sym), dict(self.cval), dict(self.sg), dict(self.origin))]); continue
-            if structured and op == 's_branch' and blk:
+            if (structured or (blk and len(blk[-1]) > 4)) and op == 's_branch' and blk:
                 T = tgt(args); nxt = int(ins[k + 1][0], 16) if k + 1 < len(ins) else None
                 if T is not None and nxt is not None and nxt == blk[-1][0] and T >= nxt and (len(blk) < 2 or T <= blk[-2][0]):
                     self.emit("} else {"); blk[-1][0] = T; blk[-1][2].append(len(self.body) - 1)

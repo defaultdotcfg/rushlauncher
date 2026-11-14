@@ -53,9 +53,14 @@ sys.path.insert(0, HERE)
 #     stride; DXBC cbuffers are float4 registers, the V# stride is 16. The GPU particle lighting CS (31ff8b85) read
 #     the sun cascade matrices from the wrong registers: every particle inside the shadow cascades was fully shadowed,
 #     so water spray, dust and smoke came out dark, bluish and nearly invisible.
-TRANSLATOR_REV = 14
+# 15: compute shaders: a forward s_cbranch_vccz/vccnz skips its block only when no lane of the wave has vcc set; it was
+#     translated as predicated, so the block always ran, and an `s_branch` over an else side made that side always
+#     overwrite the result. Now structured (whole 64-thread group = one GCN wave, or the wave where a group barrier is
+#     not safe). 102 CS change: the sky-to-ambient SH (haze never added), sky/fog raymarch results replaced by 0/1, etc.
+TRANSLATOR_REV = 15
 RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs'),
-               11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs'), 13: ('vs', 'ps', 'cs'), 14: ('vs', 'ps', 'cs', 'tess')}
+               11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs'), 13: ('vs', 'ps', 'cs'), 14: ('vs', 'ps', 'cs', 'tess'),
+               15: ('cs',)}
 
 
 def say(*a):
