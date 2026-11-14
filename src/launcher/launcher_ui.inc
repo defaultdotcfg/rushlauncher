@@ -134,7 +134,7 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"Pasta do jogo", L"Game folder", L"Carpeta del juego" },
     { L"Pasta de saves", L"Save folder", L"Carpeta de partidas" },
     { L"Sincronização vertical (VSync)", L"Vertical sync (VSync)", L"Sincronización vertical (VSync)" },
-    { L"Pular introdução (tela legal e logos)", L"Skip intro (legal screen and logos)", L"Omitir introducción (aviso legal y logos)" },
+    { L"Pular introdução", L"Skip intro", L"Omitir introducción" },
     { L"Opções avançadas", L"Advanced options", L"Opciones avanzadas" },
     { L"Camada de depuração do Direct3D 12", L"Direct3D 12 debug layer", L"Capa de depuración de Direct3D 12" },
     { L"Modo de depuração (log completo e capturas BMP)", L"Debug mode (full log and BMP captures)", L"Modo de depuración (registro completo y capturas BMP)" },
@@ -434,75 +434,24 @@ static void LayoutLog(HWND hwnd)
 {
     int sw = g_showLog ? SW_SHOW : SW_HIDE;
     ShowWindow(g_hLogEdit, sw); ShowWindow(g_hClearLogBtn, sw); ShowWindow(g_hCopyLogBtn, sw);
-    ShowWindow(g_hBtnUpdate, g_showLog ? SW_HIDE : SW_SHOW);
     SetWindowTextW(g_hLogBtn, g_showLog ? T(S_HIDELOG) : T(S_SHOWLOG));
     RECT rc = { 0, 0, UI_HERO_W, UI_H };
     InvalidateRect(hwnd, &rc, FALSE);
 }
 
+#include "graphics_ui.inc"
 #include "playlist_ui.inc"
 #include "profiles_ui.inc"
 #include "photos_ui.inc"
 #include "controls_ui.inc"
 
-// Backdrop of the content column (Jogar, Configurações, Perfis): drawn by the launcher instead of the game's
-// splash art. Dark gradient, a warm glow and slanted "speed" bands in the accent colour, then the game name.
-// Rendered once per theme/language into a bitmap (every toggle repaints the window).
+// Background of the content column (Jogar, Configurações, Perfis): the launcher's own colours, a soft vertical
+// gradient from the card colour to the main background.
 static void DrawBackdrop(Gdiplus::Graphics &g)
 {
-    static Gdiplus::Bitmap *s_bmp = nullptr;
-    static int s_key = -1;
     const int x0 = 216, w = UI_HERO_W - 216, h = UI_H;
-    const int key = (g_pal.dark ? 1 : 0) | (g_uiLang << 1);
-    if (!s_bmp || s_key != key)
-    {
-        delete s_bmp;
-        s_bmp = new Gdiplus::Bitmap(w, h, PixelFormat32bppPARGB);
-        Gdiplus::Graphics bg(s_bmp);
-        bg.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        bg.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
-        const COLORREF acc = COLOR_ACCENT_ORANGE;
-        // base: slightly lifted at the top, the main background at the bottom
-        Gdiplus::LinearGradientBrush base(Gdiplus::Point(0, -1), Gdiplus::Point(0, h + 1), GPC(g_pal.homeCard), GPC(COLOR_BG_MAIN));
-        bg.FillRectangle(&base, 0, 0, w, h);
-        // warm glow in the lower right
-        {
-            Gdiplus::GraphicsPath gp;
-            gp.AddEllipse(Gdiplus::RectF(w * 0.05f, h * 0.38f, w * 1.5f, h * 0.9f));
-            Gdiplus::PathGradientBrush pg(&gp);
-            pg.SetCenterPoint(Gdiplus::PointF(w * 0.85f, h * 0.80f));
-            pg.SetCenterColor(GPCA(g_pal.dark ? 110 : 70, acc));
-            Gdiplus::Color edge = GPCA(0, acc); int cnt = 1;
-            pg.SetSurroundColors(&edge, &cnt);
-            bg.FillPath(&pg, &gp);
-        }
-        // speed bands: parallelograms leaning right, brighter towards the bottom
-        struct Band { float x, wd; int a; };
-        const Band bands[] = { { 4, 5, 110 }, { 46, 46, 34 }, { 120, 9, 150 }, { 150, 3, 200 },
-                               { 196, 70, 26 }, { 290, 14, 110 }, { 318, 4, 170 }, { 352, 30, 55 } };
-        const float slant = 300.f, top = h * 0.30f;
-        for (const Band &bd : bands)
-        {
-            Gdiplus::PointF pts[4] = { { bd.x, (float)h }, { bd.x + bd.wd, (float)h },
-                                       { bd.x + bd.wd + slant, top }, { bd.x + slant, top } };
-            Gdiplus::LinearGradientBrush lb(Gdiplus::PointF(0, top), Gdiplus::PointF(0, (float)h),
-                                            GPCA(0, acc), GPCA(g_pal.dark ? bd.a : bd.a * 3 / 4, acc));
-            lb.SetWrapMode(Gdiplus::WrapModeTileFlipXY);
-            bg.FillPolygon(&lb, pts, 4);
-        }
-        // game name and tag line
-        Gdiplus::FontFamily ffb(L"Segoe UI Black"), ff(L"Segoe UI");
-        Gdiplus::FontFamily *title = ffb.IsAvailable() ? &ffb : &ff;
-        Gdiplus::Font fTitle(title, 58, Gdiplus::FontStyleBoldItalic, Gdiplus::UnitPixel);
-        Gdiplus::Font fTag(&ff, 13, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-        Gdiplus::SolidBrush txt(GPC(COLOR_TEXT_PRIMARY)), accB(GPC(acc)), muted(GPC(COLOR_TEXT_MUTED));
-        bg.DrawString(L"ONRUSH", -1, &fTitle, Gdiplus::PointF(26, 70), &txt);
-        bg.FillRectangle(&accB, 34, 150, 44, 4);
-        static const wchar_t *kTag[] = { L"PORT NATIVO PARA PC", L"NATIVE PC PORT", L"PORT NATIVO PARA PC" };
-        bg.DrawString(kTag[g_uiLang], -1, &fTag, Gdiplus::PointF(32, 162), &muted);
-        s_key = key;
-    }
-    g.DrawImage(s_bmp, x0, 0, w, h);
+    Gdiplus::LinearGradientBrush base(Gdiplus::Point(0, -1), Gdiplus::Point(0, h + 1), GPC(g_pal.homeCard), GPC(COLOR_BG_MAIN));
+    g.FillRectangle(&base, x0, 0, w, h);
 }
 
 static void DrawHero(HDC hdc)
@@ -521,10 +470,9 @@ static void DrawHero(HDC hdc)
     if (g_tab == 4) { PhDrawHero(g); DrawRailBrand(g); return; }
     if (g_tab == 5) { KbDrawHero(g); DrawRailBrand(g); return; }
     if (g_showLog)
-    {
-        Gdiplus::SolidBrush dim(GPCA(235, COLOR_BG_LOG));
-        g.FillRectangle(&dim, 0, 0, UI_HERO_W, UI_H);
-        return;
+    {   // the log fills the content column only; the rail (logo, tabs, status) stays as it is
+        Gdiplus::SolidBrush dim(GPC(COLOR_BG_LOG));
+        g.FillRectangle(&dim, 216, 0, UI_HERO_W - 216, UI_H);
     }
 
     Gdiplus::FontFamily ff(L"Segoe UI");
@@ -597,6 +545,9 @@ static void DrawPanel(HDC hdc)
         { UI_PANEL_X, 58, T(S_RES) }, { X2, 58, T(S_MODE) }, { UI_PANEL_X, 120, T(S_TEXTLANG) }, { X2, 120, T(S_VOICELANG) },
         { UI_PANEL_X, 256, T(S_PHOTO) }, { X2, 256, T(S_THEME) }, { UI_PANEL_X, 320, T(S_SAVEDIR) } };
     for (auto &l : labels) TextOutW(hdc, l.x, l.y, l.t, (int)wcslen(l.t));
+    GfxDrawColumn(hdc);
+    SelectObject(hdc, g_hFontUI);
+    SetTextColor(hdc, COLOR_TEXT_PRIMARY);
 
     // input boxes behind the borderless edits
     RECT r1 = { UI_PANEL_X, 340, UI_PANEL_X + UI_PANEL_W - 48, 372 };
@@ -722,13 +673,15 @@ static void BrowseFolder(HWND hwnd, HWND edit, const wchar_t *title)
     CoTaskMemFree(pidl);
 }
 
+// Output resolutions, smallest to largest.
+static const struct { int w, h; } kResList[] = { { 1280, 720 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };
+static const int kResDefault = 1;   // 1920 x 1080
+
 static void ReadUiIntoConfig()
 {
     int sel = (int)SendMessageW(g_hResCombo, CB_GETCURSEL, 0, 0);
-    if (sel == 1) { g_config.width = 2560; g_config.height = 1440; }
-    else if (sel == 2) { g_config.width = 3840; g_config.height = 2160; }
-    else if (sel == 3) { g_config.width = 1280; g_config.height = 720; }
-    else { g_config.width = 1920; g_config.height = 1080; }
+    if (sel < 0 || sel >= (int)_countof(kResList)) sel = kResDefault;
+    g_config.width = kResList[sel].w; g_config.height = kResList[sel].h;
     int modeSel = (int)SendMessageW(g_hModeCombo, CB_GETCURSEL, 0, 0);
     wcscpy_s(g_config.windowMode, 32, modeSel == 1 ? L"Windowed" : modeSel == 2 ? L"Fullscreen" : L"Borderless");
     g_config.vsync = g_vsyncOn ? 1 : 0;
@@ -736,6 +689,7 @@ static void ReadUiIntoConfig()
     g_config.verboseLog = g_verboseOn ? 1 : 0;
     g_config.skipIntro = g_skipIntroOn ? 1 : 0;
     g_config.minimizeOnPlay = g_minimizeOn ? 1 : 0;
+    GfxReadIntoConfig();
     wcscpy_s(g_config.theme, 8, g_pal.dark ? L"dark" : L"light");
     wcscpy_s(g_config.photoFormat, 8, SendMessageW(g_hPhotoFmtCombo, CB_GETCURSEL, 0, 0) == 1 ? L"jpg" : L"png");
     wcscpy_s(g_config.uiLang, 8, kUiLangCodes[g_uiLang]);
@@ -796,6 +750,7 @@ static void ApplyUiLanguage(HWND hwnd)
     SendMessageW(g_hThemeCombo, CB_ADDSTRING, 0, (LPARAM)T(S_THEME_LIGHT));
     SendMessageW(g_hThemeCombo, CB_SETCURSEL, g_pal.dark ? 0 : 1, 0);
     SetWindowTextW(g_hMinimizeChk, T(S_MINIMIZE));
+    GfxFill(false);
 
     SetWindowTextW(g_hVsyncChk, T(S_VSYNC));
     SetWindowTextW(g_hSkipIntroChk, T(S_SKIP));
@@ -869,6 +824,7 @@ static void ApplyTheme(HWND hwnd, bool dark)
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d, sizeof(d));
     HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hThemeCombo, g_hPlCombo };
     for (HWND c : combos) if (c) SetWindowTheme(c, dark ? L"DarkMode_CFD" : L"CFD", nullptr);
+    GfxApplyTheme(dark);
     HWND lists[] = { g_hLogEdit, g_hProfList, g_hPhList, g_hKbList, g_hPlList };
     for (HWND l : lists) if (l) SetWindowTheme(l, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     PhApplyThemeColors();
@@ -914,9 +870,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         SendMessageW(g_hUiLangCombo, CB_SETCURSEL, g_uiLang, 0);
 
         g_hResCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 78, HALF, 300, hwnd, (HMENU)ID_RES_COMBO, nullptr, nullptr);
-        const wchar_t *res[] = { L"1920 × 1080 (FHD)", L"2560 × 1440 (QHD)", L"3840 × 2160 (4K)", L"1280 × 720 (HD)" };
-        for (auto s : res) SendMessageW(g_hResCombo, CB_ADDSTRING, 0, (LPARAM)s);
-        SendMessageW(g_hResCombo, CB_SETCURSEL, g_config.width == 2560 ? 1 : g_config.width == 3840 ? 2 : g_config.width == 1280 ? 3 : 0, 0);
+        int resSel = kResDefault;
+        for (int i = 0; i < (int)_countof(kResList); ++i)
+        {
+            wchar_t t[32]; swprintf_s(t, L"%d × %d", kResList[i].w, kResList[i].h);
+            SendMessageW(g_hResCombo, CB_ADDSTRING, 0, (LPARAM)t);
+            if (kResList[i].w == g_config.width && kResList[i].h == g_config.height) resSel = i;
+        }
+        SendMessageW(g_hResCombo, CB_SETCURSEL, resSel, 0);
 
         g_hModeCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 78, HALF, 300, hwnd, (HMENU)ID_MODE_COMBO, nullptr, nullptr);
         // game text / voice language (filled by ApplyUiLanguage)
@@ -951,24 +912,25 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_hBtnOpenSave = CreateWindowW(L"BUTTON", L"", od, X + bw + 8, UI_H - 46, bw, 30, hwnd, (HMENU)ID_BTN_OPEN_SAVE, nullptr, nullptr);
         g_hLogBtn = CreateWindowW(L"BUTTON", L"", od, X + 2 * (bw + 8), UI_H - 46, bw, 30, hwnd, (HMENU)ID_BTN_SHOW_LOG, nullptr, nullptr);
 
-        // log overlay (over the art), hidden until "Ver log"
+        // log view in the content column (the rail stays visible), hidden until "Ver log"
         g_hLogEdit = CreateWindowW(L"EDIT", L"", WS_CHILD | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
-                                   24, 24, UI_HERO_W - 48, UI_H - 92, hwnd, (HMENU)ID_LOG_EDIT, nullptr, nullptr);
+                                   232, 24, UI_HERO_W - 232 - 16, UI_H - 96, hwnd, (HMENU)ID_LOG_EDIT, nullptr, nullptr);
         SetWindowTheme(g_hLogEdit, g_pal.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
-        g_hClearLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 24, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_CLEAR_LOG, nullptr, nullptr);
-        g_hCopyLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 122, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_COPY_LOG, nullptr, nullptr);
+        g_hClearLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 232, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_CLEAR_LOG, nullptr, nullptr);
+        g_hCopyLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 330, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_COPY_LOG, nullptr, nullptr);
         g_hBtnKill = nullptr;
         g_hBtnUpdate = CreateWindowW(L"BUTTON", L"", od, 16, UI_H - 48, 184, 30, hwnd, (HMENU)ID_BTN_UPDATE, nullptr, nullptr);
         PlCreateControls(hwnd);
         ProfCreateControls(hwnd);
         PhCreateControls(hwnd);
         KbCreateControls(hwnd);
+        GfxCreateControls(hwnd);
 
         EnumChildWindows(hwnd, [](HWND h, LPARAM) -> BOOL {
             SendMessageW(h, WM_SETFONT, (WPARAM)(GetDlgCtrlID(h) == ID_LOG_EDIT ? g_hFontLog : g_hFontUI), TRUE);
             return TRUE; }, 0);
         for (HWND c : combos) SendMessageW(c, CB_SETITEMHEIGHT, (WPARAM)-1, 24);
-        ApplyUiLanguage(hwnd);
+        ApplyUiLanguage(hwnd);   // also fills the GRÁFICOS combos from g_config
         PlUpdateVisibility(hwnd);
 
         // "OnRushLauncher.exe -setup <copy of the game>": set the game up in the launcher folder without asking
@@ -1150,6 +1112,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             g_config.vsync = GetPrivateProfileIntW(L"Display", L"VSync", g_config.vsync, ini);
             g_config.gfxPreset = GetPrivateProfileIntW(L"Graphics", L"Preset", g_config.gfxPreset, ini);
             g_config.fpsLimit = GetPrivateProfileIntW(L"Graphics", L"FpsLimit", g_config.fpsLimit, ini);
+            LoadGfxDetails(ini, &g_config);
+            GfxFill(true);
             g_vsyncOn = g_config.vsync != 0;
             // ... and so were the languages picked in the game's first options page
             GetPrivateProfileStringW(L"Language", L"Text", g_config.textLang, g_config.textLang, 16, ini);
@@ -1192,6 +1156,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         int id = LOWORD(wParam);
         int code = HIWORD(wParam);
         if (ProfHandleCommand(hwnd, id, code)) return 0;
+        if (id >= ID_GFX_COMBO0 && id < ID_GFX_COMBO0 + GR_COUNT)
+        {
+            if (code == CBN_SELCHANGE) { ReadUiIntoConfig(); SaveIni(); }
+            return 0;
+        }
         if (PhHandleCommand(hwnd, id, code)) return 0;
         if (KbHandleCommand(hwnd, id, code)) return 0;
         switch (id)

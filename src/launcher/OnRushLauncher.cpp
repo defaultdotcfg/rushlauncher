@@ -108,6 +108,8 @@ struct LauncherConfig
     int vsync;
     int gfxPreset;          // in-game "Graphics quality": 0 console, 1..5 PC ultra low .. ultra
     int fpsLimit;           // in-game "Frame rate limit" (fps, 0 = unlimited)
+    int upscaler;           // in-game "Upscaler": 0 TAA, 1 FSR 2
+    int gfxDetail[8];       // in-game detail rows (bridge gfx_options.inc kDetail order), 0 = AUTO (the preset's value)
     wchar_t gamePath[MAX_PATH];
     wchar_t savePath[MAX_PATH];
     int diagnostics;
@@ -172,6 +174,8 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->vsync = 1;
     cfg->gfxPreset = 0;
     cfg->fpsLimit = 60;
+    cfg->upscaler = 0;
+    for (int &d : cfg->gfxDetail) d = 0;
     cfg->gamePath[0] = L'\0';
     wcscpy_s(cfg->savePath, MAX_PATH, L".\\save");
     cfg->diagnostics = 1;
@@ -188,8 +192,26 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->musicShuffle = 0;
     cfg->musicVolume = 70;
     cfg->musicPlaylist[0] = L'\0';
-    cfg->minimizeOnPlay = 0;
+    cfg->minimizeOnPlay = 1;
     wcscpy_s(cfg->theme, 8, L"dark");
+}
+
+// onrush.ini [Graphics] keys of the in-game detail rows (same order and values as the bridge's gfx_options.inc)
+static const wchar_t *const kGfxDetailKeys[8] = { L"RenderScale", L"Shadows", L"WorldDetail", L"VehicleDetail",
+                                                  L"Tessellation", L"Fog", L"LightEffects", L"Debris" };
+static const int kGfxDetailCount[8] = { 9, 5, 5, 5, 3, 4, 3, 3 };
+
+// Upscaler and detail rows: also written by the game's GRAPHICS page, so read again when the game closes.
+static void LoadGfxDetails(const wchar_t *iniPath, LauncherConfig *cfg)
+{
+    wchar_t u[16] = {};
+    GetPrivateProfileStringW(L"Graphics", L"Upscaler", cfg->upscaler ? L"FSR2" : L"TAA", u, 16, iniPath);
+    cfg->upscaler = _wcsicmp(u, L"FSR2") == 0 ? 1 : 0;
+    for (int d = 0; d < 8; ++d)
+    {
+        UINT v = GetPrivateProfileIntW(L"Graphics", kGfxDetailKeys[d], cfg->gfxDetail[d], iniPath);
+        cfg->gfxDetail[d] = v < (UINT)kGfxDetailCount[d] ? (int)v : 0;
+    }
 }
 
 static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
@@ -207,6 +229,7 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     cfg->vsync = GetPrivateProfileIntW(L"Display", L"VSync", cfg->vsync, iniPath);
     cfg->gfxPreset = GetPrivateProfileIntW(L"Graphics", L"Preset", cfg->gfxPreset, iniPath);
     cfg->fpsLimit = GetPrivateProfileIntW(L"Graphics", L"FpsLimit", cfg->fpsLimit, iniPath);
+    LoadGfxDetails(iniPath, cfg);
     GetPrivateProfileStringW(L"System", L"GamePath", cfg->gamePath, cfg->gamePath, MAX_PATH, iniPath);
     GetPrivateProfileStringW(L"System", L"SavePath", cfg->savePath, cfg->savePath, MAX_PATH, iniPath);
     cfg->diagnostics = GetPrivateProfileIntW(L"System", L"Diagnostics", cfg->diagnostics, iniPath);
@@ -227,6 +250,8 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     if (cfg->musicVolume < 0 || cfg->musicVolume > 100) cfg->musicVolume = 70;
     GetPrivateProfileStringW(L"Music", L"Playlist", cfg->musicPlaylist, cfg->musicPlaylist, 64, iniPath);
     cfg->minimizeOnPlay = GetPrivateProfileIntW(L"Launcher", L"MinimizeOnPlay", cfg->minimizeOnPlay, iniPath);
+    // ini written before "Minimizar o launcher ao jogar" became on by default (v0.2.0): turn it on once
+    if (GetPrivateProfileIntW(L"Launcher", L"ConfigVersion", 0, iniPath) < 2) cfg->minimizeOnPlay = 1;
     GetPrivateProfileStringW(L"Launcher", L"Theme", cfg->theme, cfg->theme, 8, iniPath);
     if (_wcsicmp(cfg->theme, L"light") != 0) wcscpy_s(cfg->theme, 8, L"dark");
 }
@@ -248,6 +273,12 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
     WritePrivateProfileStringW(L"Graphics", L"Preset", buf, iniPath);
     swprintf_s(buf, 64, L"%d", cfg->fpsLimit);
     WritePrivateProfileStringW(L"Graphics", L"FpsLimit", buf, iniPath);
+    WritePrivateProfileStringW(L"Graphics", L"Upscaler", cfg->upscaler ? L"FSR2" : L"TAA", iniPath);
+    for (int d = 0; d < 8; ++d)
+    {
+        swprintf_s(buf, 64, L"%d", cfg->gfxDetail[d]);
+        WritePrivateProfileStringW(L"Graphics", kGfxDetailKeys[d], buf, iniPath);
+    }
 
     WritePrivateProfileStringW(L"System", L"GamePath", cfg->gamePath, iniPath);
     WritePrivateProfileStringW(L"System", L"SavePath", cfg->savePath, iniPath);
@@ -280,6 +311,7 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
     swprintf_s(buf, 64, L"%d", cfg->minimizeOnPlay);
     WritePrivateProfileStringW(L"Launcher", L"MinimizeOnPlay", buf, iniPath);
     WritePrivateProfileStringW(L"Launcher", L"Theme", cfg->theme, iniPath);
+    WritePrivateProfileStringW(L"Launcher", L"ConfigVersion", L"2", iniPath);
 }
 
 static void GetEffectiveGameDir(const LauncherConfig *cfg, wchar_t *outPath, size_t maxLen)

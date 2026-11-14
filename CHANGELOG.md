@@ -1,6 +1,8 @@
 # Changelog
 
-## Não lançado
+## v0.2.0 — opções gráficas no jogo, FSR 2, mouse e nuvens
+
+**Como atualizar:** não é preciso apagar a pasta do launcher. A partir da v0.1.1, o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual. No primeiro JOGAR depois de atualizar, o launcher refaz parte dos shaders já preparados.
 
 ### Novidades
 - Novas opções em **Configurações > Gráficos**, dentro do próprio jogo:
@@ -17,10 +19,14 @@
 - Nova opção **Sair** no menu principal do jogo: fecha o jogo e volta para a área de trabalho, depois de confirmar.
 - O jogo abre bem mais rápido: a tela inicial não espera mais pelos servidores online, que não existem mais, e entra direto no modo offline.
 - O Discord agora mostra "RushLauncher" e a versão em uso.
-- **Launcher com visual novo:** cores grafite mais limpas nos temas escuro e claro, e a imagem do jogo deu lugar a um fundo próprio do launcher. A lista de perfis também segue as cores do tema.
+- **Launcher com visual novo:** cores grafite mais limpas nos temas escuro e claro, com um fundo simples nas cores do launcher. A lista de perfis também segue as cores do tema.
+- As opções gráficas do jogo também estão no launcher, em **Configurações > Gráficos**. O que muda num lugar aparece no outro.
+- "Minimizar o launcher ao jogar" agora vem ligado.
 
 ### Correções
 - Alt+Enter agora alterna corretamente entre tela cheia e janela.
+- O log do launcher não cobre mais o menu lateral.
+- A lista de resoluções do launcher está em ordem, da menor para a maior.
 - Iluminação mais fiel ao Xbox: a bruma do céu volta a entrar na luz ambiente, e vários efeitos de céu, névoa e tela que saíam apagados agora aparecem.
 - As nuvens voltaram ao céu, e o horizonte ganhou a bruma clara do Xbox.
 

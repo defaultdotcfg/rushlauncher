@@ -640,7 +640,7 @@ static void PlUpdateVisibility(HWND hwnd)
     ShowWindow(g_hBtnOpenSave, settingsPage ? SW_SHOW : SW_HIDE);
     ShowWindow(g_hLogBtn, SW_SHOW);
     ShowWindow(g_hUiLangCombo, SW_SHOW);
-    ShowWindow(g_hBtnUpdate, g_showLog ? SW_HIDE : SW_SHOW);
+    ShowWindow(g_hBtnUpdate, SW_SHOW);
     HWND adv[] = { g_hD3DDebugChk, g_hVerboseChk };
     for (HWND h : adv) if (h) ShowWindow(h, settingsPage && g_showAdvanced ? SW_SHOW : SW_HIDE);
     HWND plc[] = { g_hPlNew, g_hPlRename, g_hPlDelete, g_hPlEnable, g_hPlShuffle, g_hPlVolume, g_hPlAddFiles, g_hPlAddFolder,
@@ -649,7 +649,8 @@ static void PlUpdateVisibility(HWND hwnd)
     ShowWindow(g_hPlCombo, pl && !g_plEditing ? SW_SHOW : SW_HIDE);
     ShowWindow(g_hPlNameEdit, pl && g_plEditing ? SW_SHOW : SW_HIDE);
     ShowWindow(g_hPlList, pl && !g_plView.empty() ? SW_SHOW : SW_HIDE);
-    if (pl && g_showLog) { g_showLog = false; LayoutLog(hwnd); }
+    if (g_tab != 0 && g_showLog) { g_showLog = false; LayoutLog(hwnd); }   // the log is a view of the Jogar tab
+    GfxUpdateVisibility(settingsPage);
     InvalidateRect(g_hTabHome, nullptr, TRUE);
     InvalidateRect(g_hTabSettings, nullptr, TRUE);
     InvalidateRect(g_hTabPlaylist, nullptr, TRUE);
