@@ -10,6 +10,12 @@ $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path "$PSScriptRoot\.."
 
+# AMD FSR2 static libraries for d3d12_x.dll (downloaded and built once into deps\fsr2; FSR2_API_DIR
+# points at an existing ffx-fsr2-api folder instead)
+$fsr2 = $env:FSR2_API_DIR
+if (-not $fsr2) { $fsr2 = (& "$PSScriptRoot\build_fsr2.ps1" | Select-Object -Last 1) }
+if (-not (Test-Path "$fsr2\ffx_fsr2.h")) { throw "FSR2 API folder not found: $fsr2" }
+
 # Locate MSVC toolchain dynamically
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vswhere)) {
@@ -92,8 +98,9 @@ try {
         "/DEF:$mmdevapi\Exports.def")
 
     # 5. d3d12_x.dll
-    Invoke-Cl @("/O2", "/std:c++20", "/LD", "/EHsc", "/I$kernelx", "/I$d3d12x", "/Fed3d12_x.dll",
-        "$d3d12x\onrush_d3d12_x.cpp", "$d3d12x\xbox_sampler_translator.cpp", "/link", "kernelx.lib")
+    Invoke-Cl @("/O2", "/std:c++20", "/LD", "/EHsc", "/I$kernelx", "/I$d3d12x", "/I$fsr2", "/Fed3d12_x.dll",
+        "$d3d12x\onrush_d3d12_x.cpp", "$d3d12x\xbox_sampler_translator.cpp", "/link", "kernelx.lib",
+        "$fsr2\bin\ffx_fsr2_api\ffx_fsr2_api_x64.lib", "$fsr2\bin\ffx_fsr2_api\ffx_fsr2_api_dx12_x64.lib")
 
     # 6. OnRushLauncher.exe
     # /utf-8: the source is UTF-8 (accents); /MANIFEST:EMBED: Common Controls v6 dependency

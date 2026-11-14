@@ -70,6 +70,7 @@ Testing/
 # ---- rushlauncher ----
 # build output
 bin/
+deps/
 build/
 *.obj
 *.lib

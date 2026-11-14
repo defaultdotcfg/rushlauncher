@@ -35,6 +35,40 @@ static inline bool DescTrack_Get(SIZE_T cpu, DescInfo *out) {
   return ok;
 }
 
+// GPU VA of the constant buffer each CPU descriptor slot points at (native CBVs and converted Xbox V#s).
+static std::unordered_map<SIZE_T, UINT64> g_cbvVa;
+static inline void DescTrack_SetCbv(SIZE_T cpu, UINT64 va) {
+  if (!cpu) return;
+  AcquireSRWLockExclusive(&g_descLock);
+  g_cbvVa[cpu] = va;
+  ReleaseSRWLockExclusive(&g_descLock);
+}
+// Constant buffer VA of slot `k` of the table at GPU handle `gpu` (0 if unknown).
+static inline UINT64 DescTrack_TableCbv(UINT64 gpu, UINT k) {
+  UINT64 va = 0;
+  AcquireSRWLockShared(&g_descLock);
+  for (auto &h : g_descHeaps)
+    if (h.gpu && gpu >= h.gpu && gpu < h.gpu + (UINT64)h.num * h.inc) {
+      auto it = g_cbvVa.find(h.cpu + (SIZE_T)(gpu - h.gpu) + (SIZE_T)k * h.inc);
+      if (it != g_cbvVa.end()) va = it->second;
+      break;
+    }
+  ReleaseSRWLockShared(&g_descLock);
+  return va;
+}
+// Resource of SRV/UAV slot `k` of the table at GPU handle `gpu` (kind 1 = SRV, 2 = UAV), or null.
+static inline ID3D12Resource *DescTrack_TableRes(UINT64 gpu, UINT k, UINT kind, DescInfo *out) {
+  SIZE_T cpu = 0;
+  AcquireSRWLockShared(&g_descLock);
+  for (auto &h : g_descHeaps)
+    if (h.gpu && gpu >= h.gpu && gpu < h.gpu + (UINT64)h.num * h.inc) { cpu = h.cpu + (SIZE_T)(gpu - h.gpu) + (SIZE_T)k * h.inc; break; }
+  ReleaseSRWLockShared(&g_descLock);
+  DescInfo di;
+  if (!cpu || !DescTrack_Get(cpu, &di) || !di.res || di.kind != kind) return nullptr;
+  if (out) *out = di;
+  return di.res;
+}
+
 static inline void DescTrack_RegisterHeap(SIZE_T cpu, UINT64 gpu, UINT num, UINT inc) {
   AcquireSRWLockExclusive(&g_descLock);
   g_descHeaps.push_back({ cpu, gpu, num, inc });

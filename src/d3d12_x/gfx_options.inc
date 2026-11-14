@@ -31,6 +31,7 @@ static const int kFpsCount = 8;
 static volatile LONG g_preset = 0;
 static volatile LONG g_fpsIdx = 1;
 static volatile LONG g_vsync = 1;
+static volatile LONG g_upscaler = 0;   // 0 = the game's TAA, 1 = FSR 2 (upscaler.inc)
 static wchar_t g_ini[MAX_PATH] = {};
 static HMODULE g_exe = nullptr;
 static bool g_tearingSupported = false;
@@ -62,6 +63,7 @@ static void SaveIni() {
   WritePrivateProfileStringW(L"Graphics", L"FpsLimit", b, g_ini);
   swprintf_s(b, L"%ld", (long)g_vsync);
   WritePrivateProfileStringW(L"Display", L"VSync", b, g_ini);
+  WritePrivateProfileStringW(L"Graphics", L"Upscaler", g_upscaler ? L"FSR2" : L"TAA", g_ini);
 }
 
 // ---- texts --------------------------------------------------------------------------------------
@@ -123,6 +125,9 @@ static const Text kTexts[] = {
   {"ID_RL_M_HIGH", {"HIGH", "ALTO", "ÉLEVÉ", "ALTO", "HOCH", "ALTO", "WYSOKI"}},
   {"ID_RL_FEW", {"FEW", "POUCOS", "PEU", "POCOS", "WENIG", "POCHI", "MAŁO"}},
   {"ID_RL_MANY", {"MANY", "MUITOS", "BEAUCOUP", "MUCHOS", "VIELE", "MOLTI", "DUŻO"}},
+  {"ID_RL_UPSCALER", {"UPSCALER", "UPSCALER", "MISE À L'ÉCHELLE", "ESCALADO", "UPSCALER", "UPSCALER", "SKALOWANIE"}},
+  {"ID_RL_UPS_TAA", {"TAA", "TAA", "TAA", "TAA", "TAA", "TAA", "TAA"}},
+  {"ID_RL_UPS_FSR2", {"FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2"}},
   // voices and text page (language.inc)
   {"ID_RL_VOICE_TEXT", {"VOICES AND TEXT", "VOZES E TEXTO", "VOIX ET TEXTE", "VOCES Y TEXTO", "STIMMEN UND TEXT",
                         "VOCI E TESTO", "GŁOSY I TEKST"}},
@@ -406,7 +411,7 @@ static_assert(sizeof(MenuItem) == 0x40, "menu item layout");
 static const char *const kPresetKeys[] = {"ID_RL_Q_CONSOLE", "ID_RL_Q_ULTRALOW", "ID_RL_Q_LOW",
                                           "ID_RL_Q_MEDIUM", "ID_RL_Q_HIGH", "ID_RL_Q_ULTRA"};
 static const char *const kOnOffKeys[] = {"ID_RL_OFF", "ID_RL_ON"};
-enum : uint32_t { kIdQuality = 0x52, kIdFps = 0x53, kIdVsync = 0x54, kIdDetail0 = 0x55 };
+enum : uint32_t { kIdQuality = 0x52, kIdFps = 0x53, kIdVsync = 0x54, kIdDetail0 = 0x55, kIdUpscaler = 0x5D };
 
 static int ListIndex(float v, int count) {
   int i = (int)(v + 0.5f);
@@ -436,6 +441,12 @@ static void OnFps(float value, int) {
   g_fpsIdx = ListIndex(value, kFpsCount);
   SaveIni();
   log_line("[gfx] frame rate limit -> %d\r\n", kFpsChoices[g_fpsIdx]);
+}
+static const char *const kUpscalerKeys[] = {"ID_RL_UPS_TAA", "ID_RL_UPS_FSR2"};
+static void OnUpscaler(float value, int) {
+  g_upscaler = ListIndex(value, 2);
+  SaveIni();
+  log_line("[gfx] upscaler -> %s\r\n", g_upscaler ? "FSR 2" : "TAA");
 }
 static void OnVsync(float value, int) {
   g_vsync = ListIndex(value, 2);
@@ -481,6 +492,11 @@ static void AddRows(void *page) {
     it.name = kDetail[d].name; it.callback = kDetailCallbacks[d]; it.id = kIdDetail0 + d;
     it.values = kDetail[d].values; it.count = kDetail[d].count; it.value = (float)g_detail[d];
     add(page, &it);
+    if (d == D_RES) {
+      it.name = "ID_RL_UPSCALER"; it.callback = (void *)&OnUpscaler; it.id = kIdUpscaler;
+      it.values = kUpscalerKeys; it.count = 2; it.value = (float)g_upscaler;
+      add(page, &it);
+    }
   }
   it.name = "ID_RL_FPS_LIMIT"; it.callback = (void *)&OnFps; it.id = kIdFps;
   it.values = kFpsKeys; it.count = kFpsCount; it.value = (float)g_fpsIdx;
@@ -545,6 +561,12 @@ static void Install(HMODULE hExe) {
   for (int i = 0; i < kFpsCount; ++i)
     if (kFpsChoices[i] == fps) g_fpsIdx = i;
   g_vsync = EnvInt("ONRUSH_VSYNC", 1) ? 1 : 0;
+  {
+    // ONRUSH_UPSCALER overrides onrush.ini [Graphics] Upscaler (TAA / FSR2)
+    wchar_t u[16] = {};
+    if (!GetEnvironmentVariableW(L"ONRUSH_UPSCALER", u, 16) && g_ini[0]) GetPrivateProfileStringW(L"Graphics", L"Upscaler", L"TAA", u, 16, g_ini);
+    g_upscaler = _wcsicmp(u, L"FSR2") == 0 ? 1 : 0;
+  }
   if (g_ini[0])
     for (int d = 0; d < D_COUNT; ++d) {
       UINT v = GetPrivateProfileIntW(L"Graphics", kDetail[d].ini, 0, g_ini);

@@ -7286,6 +7286,7 @@ static void PatchBootDoneFlag(HMODULE hExe) {
 #include "gfx_options.inc"
 #include "cameras.inc"
 #include "language.inc"
+namespace ups { static void Install(HMODULE hExe); }   // upscaler.inc
 
 // Title screen without the dead online services. After "press A" the title state machine
 // (exe+0x3B4D42) sits in state 3 ("CONECTANDO") until GameSparks signs in, which never happens
@@ -7690,6 +7691,7 @@ static void PatchAllocThunk(HMODULE hExe) {
   gfxopt::Install(hExe);
   cams::Install(hExe);
   lang::Install(hExe);
+  ups::Install(hExe);
   PatchSkipOnlineWait(hExe);
   PatchVoiceLanguage(hExe);
   PatchUnlockCosmetics(hExe);
@@ -8811,6 +8813,7 @@ static void STDMETHODCALLTYPE HookedCreateCBV(ID3D12Device *This, const D3D12_CO
   static volatile LONG s_n = 0; LONG id = InterlockedIncrement(&s_n);
   static const bool s_log = GetEnvironmentVariableA("ONRUSH_LOG_CBV", nullptr, 0) > 0;
   if (s_log && id <= 400) log_line("[cbvdesc] #%ld va=%llX size=%u dest=%llX\r\n", (long)id, pDesc ? (unsigned long long)pDesc->BufferLocation : 0ull, pDesc ? pDesc->SizeInBytes : 0u, (unsigned long long)dest.ptr);
+  if (pDesc) DescTrack_SetCbv(dest.ptr, pDesc->BufferLocation);
   if (g_TrueCreateCBV) g_TrueCreateCBV(This, pDesc, dest);
 }
 // ---- Raw GCN descriptors written by the game straight into descriptor heap memory (Xbox inlines CreateConstantBufferView).
@@ -8843,6 +8846,7 @@ static bool FixOneRawCbv(SIZE_T cpu, UINT64 gpu, UINT k) {
   UINT64 sz = (UINT64)w[2] * 16ull + (base - cd.BufferLocation); sz = (sz + 255ull) & ~255ull; if (sz > 65536ull) sz = 65536ull; cd.SizeInBytes = (UINT)sz;
   D3D12_CPU_DESCRIPTOR_HANDLE hnd; hnd.ptr = cpu;
   g_TrueCreateCBV(g_pMainDevice, &cd, hnd);
+  DescTrack_SetCbv(cpu, base);
   static volatile LONG s_fixed = 0; LONG c = InterlockedIncrement(&s_fixed);
   if (c <= 20 || (c & 0xFFFF) == 0) log_line("[rawdesc] #%ld CBV V# -> native: va=%llX size=%u (records=%u) at gpu=%llX+%u\r\n", (long)c, (unsigned long long)cd.BufferLocation, cd.SizeInBytes, w[2], (unsigned long long)gpu, k);
   return true;
@@ -9807,6 +9811,7 @@ static void LogCbvDumpImpl(const D3D12_GPU_VIRTUAL_ADDRESS* cbv) {
   }
 }
 static struct CbvDumpInit { CbvDumpInit() { g_pfnLogCbvDump = LogCbvDumpImpl; } } g_cbvDumpInit;
+#include "upscaler.inc"
 
 typedef void(STDMETHODCALLTYPE *PFN_ExecuteCommandLists)(
     ID3D12CommandQueue *pQueue, UINT NumCommandLists,
@@ -9914,6 +9919,7 @@ HookedExecuteCommandLists(ID3D12CommandQueue *pQueue, UINT NumCommandLists,
     return;
   }
 
+  Ups_OnExecute();
   if (pQueue && pQueue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) g_LastDirectQueue = pQueue;
   std::vector<ID3D12CommandList *> validLists;
   validLists.reserve(NumCommandLists * 2);

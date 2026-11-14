@@ -11,6 +11,7 @@
 - As escolhas ficam salvas para a próxima vez, e a opção V-Sync do launcher passou a funcionar.
 - Duas câmeras novas na corrida: **capô** e **cockpit** (primeira pessoa). O botão de trocar câmera (RB, ou E no teclado) agora alterna entre distante, próxima, capô e cockpit, e a última escolhida fica salva.
 - Nova página **Configurações > Vozes e texto**: o idioma dos textos muda na hora, sem reiniciar. O idioma das vozes também é escolhido ali e vale a partir da próxima vez que o jogo abrir (um aviso do próprio jogo lembra disso ao trocar).
+- Nova opção **Upscaler** em Configurações > Gráficos: **TAA** (o original do jogo) ou **FSR 2** (AMD), que deixa a imagem mais nítida quando a resolução interna está abaixo de 100%. Funciona em qualquer placa de vídeo e troca na hora.
 - O jogo abre bem mais rápido: a tela inicial não espera mais pelos servidores online, que não existem mais, e entra direto no modo offline.
 - O Discord agora mostra "RushLauncher" e a versão em uso.
 

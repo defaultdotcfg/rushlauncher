@@ -5,6 +5,8 @@
 | `src/d3d12_x`, `src/MMDevAPI` | [WinDurango](https://github.com/WinDurango/WinDurango) (D3D12X, MMDevAPI) | LGPL-3.0 | `licenses/WinDurango-LGPL-3.0.txt` |
 | `src/kernelx`, `src/combase`, `src/EtwPlus` | SlimEra by XWine1 (ERA kernelx, incl. `MapTitleEsramPages`) | MIT, Copyright (c) 2025 XWine1 | `licenses/SlimEra-MIT.txt` |
 
+`d3d12_x.dll` also links, unmodified, [AMD FidelityFX Super Resolution 2](https://github.com/GPUOpen-Effects/FidelityFX-FSR2) 2.2.1 (the FSR 2 upscaler option; source downloaded and built by `scripts/build_fsr2.ps1`): MIT, Copyright (c) 2022-2023 Advanced Micro Devices, Inc., `licenses/FidelityFX-FSR2-MIT.txt`.
+
 The release zip also bundles, unmodified, in `translator\`:
 
 | Component | License | License text (in the zip) |

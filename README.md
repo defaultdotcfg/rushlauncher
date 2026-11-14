@@ -202,6 +202,7 @@ Sem datas: as versões saem quando estiverem prontas.
 | `scripts/translator` | Tradutor GCN → HLSL (`gcn2hlsl.py`), bypass de tesselação e compilação com o DXC; `translate_all.py` é o ponto de entrada |
 | `scripts/build_translator.ps1` | Empacota o tradutor como `translator\olauncher-translator.exe` (PyInstaller) com o DXC do Windows SDK |
 | `scripts/build.ps1` | Compila tudo em `bin\` |
+| `scripts/build_fsr2.ps1` | Baixa (versão fixa, conferida por hash) e compila o AMD FSR 2 em `deps\fsr2\`; o `build.ps1` chama sozinho |
 | `scripts/stage.ps1` | Monta a pasta jogável juntando a sua cópia do jogo com os binários |
 
 A preparação de shaders tem três partes:
@@ -211,7 +212,7 @@ A preparação de shaders tem três partes:
 
 ### Compilando
 
-Requisitos: Visual Studio 2022 ou mais novo, com **Desenvolvimento para desktop com C++**; Windows SDK 10.0.22621 ou mais novo; e, para empacotar o tradutor, **Python 3.10+** com `pyinstaller`.
+Requisitos: Visual Studio 2022 ou mais novo, com **Desenvolvimento para desktop com C++**; Windows SDK 10.0.22621 ou mais novo; **CMake** (para o FSR 2); e, para empacotar o tradutor, **Python 3.10+** com `pyinstaller`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1             # gera bin\

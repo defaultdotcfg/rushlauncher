@@ -239,6 +239,13 @@ static PsDrawInfo g_psInfo[kPsMax];
 static volatile LONG g_psNext = 0;
 
 static thread_local D3D12_GPU_VIRTUAL_ADDRESS t_rootCbv[16] = {};
+static thread_local D3D12_GPU_VIRTUAL_ADDRESS t_ccbv[16] = {};   // compute root CBVs
+// Compute root arguments and descriptor heaps as the game set them (the upscaler records its own passes in the
+// middle of the game's command list and puts these back afterwards). Kind: 1 table, 2 CBV, 3 SRV, 4 UAV, 5 constants.
+static thread_local UINT8 t_cKind[16] = {};
+static thread_local D3D12_GPU_VIRTUAL_ADDRESS t_cVa[16] = {};
+static thread_local UINT t_cConst[16][32] = {}; static thread_local UINT t_cConstN[16] = {};   // values and how many were set
+static thread_local ID3D12DescriptorHeap* t_heaps[2] = {}; static thread_local UINT t_nHeaps = 0;
 static thread_local int t_topo = 0;
 struct OmState { void* list; UINT n; BOOL single; unsigned long long h0, h1, h2, ds; };
 static thread_local OmState t_om = {};
@@ -745,6 +752,7 @@ static void DumpBreadcrumbs() {
     }
 }
 
+static bool Upscaler_OnDispatch(BridgeCommandList* self, UINT gx, UINT gy, UINT gz);   // upscaler.inc: true = the dispatch was recorded there
 static void STDMETHODCALLTYPE BridgeCmdList_Dispatch(
     BridgeCommandList* self,
     UINT ThreadGroupCountX,
@@ -792,6 +800,10 @@ static void STDMETHODCALLTYPE BridgeCmdList_Dispatch(
     if (g_drawDetail && g_tsHeap && g_tsReadback && self && self->m_pRealCmdList && self->m_type == D3D12_COMMAND_LIST_TYPE_DIRECT) { LONG ti = InterlockedIncrement(&g_tsNext) - 1; if (ti < 1024) { tsIdx = ti; tsCl = self->m_pRealCmdList; g_tsInfo[ti] = { t_lastPso, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ }; tsCl->EndQuery(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * ti)); } }
     if (g_drawDetail && InterlockedIncrement(&g_drawDetailCount) <= 3000)
         log_line("[disp] pso=%p groups=%u,%u,%u\r\n", t_lastPso, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+    if (self && self->m_pRealCmdList && Upscaler_OnDispatch(self, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)) {
+        if (tsIdx >= 0) { tsCl->EndQuery(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * tsIdx + 1)); tsCl->ResolveQueryData(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * tsIdx), 2, g_tsReadback, (UINT64)(2 * tsIdx) * 8); }
+        return;
+    }
     if (self && self->m_pRealCmdList)
     {
         LONG bc = BcBegin(self, 'D', ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
@@ -1386,6 +1398,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SetDescriptorHeaps(
     }
 
     if (validCount > 0) {
+        t_heaps[0] = validHeaps[0]; t_heaps[1] = validHeaps[1]; t_nHeaps = validCount;
         self->m_pRealCmdList->SetDescriptorHeaps(validCount, validHeaps);
     }
 }
@@ -1405,7 +1418,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SetComputeRootSignature(
     if (!self || !self->m_pRealCmdList || !pRootSignature || (uintptr_t)pRootSignature <= 0x10000)
         return;
 
-    t_csRs = pRootSignature;
+    t_csRs = pRootSignature; memset(t_cKind, 0, sizeof(t_cKind)); memset(t_cConstN, 0, sizeof(t_cConstN));
     self->m_pRealCmdList->SetComputeRootSignature(pRootSignature);
     { UINT xp = LookupRsExtraParam(pRootSignature); if (xp != 0xFFFFFFFFu && g_CtrBuf) self->m_pRealCmdList->SetComputeRootUnorderedAccessView(xp, g_CtrBuf->GetGPUVirtualAddress()); }
 }
@@ -1444,7 +1457,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SetComputeRootDescriptorTable(
                  self, RootParameterIndex, (unsigned long long)BaseDescriptor.ptr, (unsigned long long)rva);
     }
     FixRawDescriptors(BaseDescriptor.ptr, t_csRs, RootParameterIndex);
-    if (RootParameterIndex < 16) t_ctab[RootParameterIndex] = BaseDescriptor.ptr;
+    if (RootParameterIndex < 16) { t_ctab[RootParameterIndex] = BaseDescriptor.ptr; t_cKind[RootParameterIndex] = 1; }
     if (self && self->m_pRealCmdList)
         self->m_pRealCmdList->SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor);
 }
@@ -1532,6 +1545,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SmartSlot32(
 static void STDMETHODCALLTYPE BridgeCmdList_SetComputeRoot32BitConstant(
     BridgeCommandList* self, UINT RootParameterIndex, UINT SrcData, UINT DestOffsetIn32BitValues)
 {
+    if (RootParameterIndex < 16 && DestOffsetIn32BitValues < 32) { t_cConst[RootParameterIndex][DestOffsetIn32BitValues] = SrcData; t_cKind[RootParameterIndex] = 5; if (t_cConstN[RootParameterIndex] < DestOffsetIn32BitValues + 1) t_cConstN[RootParameterIndex] = DestOffsetIn32BitValues + 1; }
     if (self && self->m_pRealCmdList)
         self->m_pRealCmdList->SetComputeRoot32BitConstant(RootParameterIndex, SrcData, DestOffsetIn32BitValues);
 }
@@ -1547,6 +1561,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SetGraphicsRoot32BitConstant(
 static void STDMETHODCALLTYPE BridgeCmdList_SetComputeRoot32BitConstants(
     BridgeCommandList* self, UINT RootParameterIndex, UINT Num32BitValuesToSet, const void* pSrcData, UINT DestOffsetIn32BitValues)
 {
+    if (RootParameterIndex < 16 && pSrcData) { for (UINT k = 0; k < Num32BitValuesToSet && DestOffsetIn32BitValues + k < 32; ++k) t_cConst[RootParameterIndex][DestOffsetIn32BitValues + k] = ((const UINT*)pSrcData)[k]; t_cKind[RootParameterIndex] = 5; { UINT e = DestOffsetIn32BitValues + Num32BitValuesToSet; if (e > 32) e = 32; if (t_cConstN[RootParameterIndex] < e) t_cConstN[RootParameterIndex] = e; } }
     if (self && self->m_pRealCmdList)
         self->m_pRealCmdList->SetComputeRoot32BitConstants(RootParameterIndex, Num32BitValuesToSet, pSrcData, DestOffsetIn32BitValues);
 }
@@ -1562,6 +1577,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SetGraphicsRoot32BitConstants(
 static void STDMETHODCALLTYPE BridgeCmdList_SetComputeRootConstantBufferView(
     BridgeCommandList* self, UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
 {
+    if (RootParameterIndex < 16) { t_ccbv[RootParameterIndex] = BufferLocation; t_cKind[RootParameterIndex] = 2; }
     if (self && self->m_pRealCmdList)
         self->m_pRealCmdList->SetComputeRootConstantBufferView(RootParameterIndex, BufferLocation);
 }
@@ -1577,6 +1593,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SetGraphicsRootConstantBufferView(
 static void STDMETHODCALLTYPE BridgeCmdList_SetComputeRootShaderResourceView(
     BridgeCommandList* self, UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
 {
+    if (RootParameterIndex < 16) { t_cVa[RootParameterIndex] = BufferLocation; t_cKind[RootParameterIndex] = 3; }
     if (self && self->m_pRealCmdList)
         self->m_pRealCmdList->SetComputeRootShaderResourceView(RootParameterIndex, BufferLocation);
 }
@@ -1592,6 +1609,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_SetComputeRootUnorderedAccessView(
     BridgeCommandList* self, UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
 {
     { static const bool s_logAll = GetEnvironmentVariableA("ONRUSH_LOG_DISPATCH", nullptr, 0) > 0; if (s_logAll) log_line("[ruav] p=%u va=%llX pso=%p\n", RootParameterIndex, (unsigned long long)BufferLocation, t_lastPso); }
+    if (RootParameterIndex < 16) { t_cVa[RootParameterIndex] = BufferLocation; t_cKind[RootParameterIndex] = 4; }
     if (self && self->m_pRealCmdList)
         self->m_pRealCmdList->SetComputeRootUnorderedAccessView(RootParameterIndex, BufferLocation);
 }
