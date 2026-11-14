@@ -22,6 +22,7 @@
 ### Correções
 - Alt+Enter agora alterna corretamente entre tela cheia e janela.
 - Iluminação mais fiel ao Xbox: a bruma do céu volta a entrar na luz ambiente, e vários efeitos de céu, névoa e tela que saíam apagados agora aparecem.
+- As nuvens voltaram ao céu, e o horizonte ganhou a bruma clara do Xbox.
 
 ## v0.1.5 — correção do crash no Windows 10
 

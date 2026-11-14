@@ -426,6 +426,17 @@ class Tr:
             # wave-level test (or the whole 64-thread group, = one GCN wave, where a group barrier is safe). NO_CS_VCC_SIF=1 = old.
             vcc_sif = (not structured and not loop_sif and self.kind == 'cs' and not _ENV.get('NO_CS_VCC_SIF')
                        and op in ('s_cbranch_vccz', 's_cbranch_vccnz'))
+            # CS (predicated mode): any other uniform forward s_cbranch_scc* (SCC from SGPRs/constants only) skips its block
+            # outright; ignored, the block ran even when the branch was taken (cloud raymarch f7b4c372 `RootCBV[18].w >= 0`
+            # gate: its flag jk_2b8c was computed and never used). Structured like the loop guard (an `s_branch` over an
+            # else side becomes `} else {`). The SCC test below keeps it to SCC computed from SGPRs/constants.
+            # NO_CS_SCC_SIF=1 = old.
+            if (not structured and not loop_sif and self.kind == 'cs' and not _ENV.get('NO_CS_SCC_SIF')
+                    and op in ('s_cbranch_scc0', 's_cbranch_scc1')):
+                T_ = tgt(args)
+                if (T_ is not None and T_ > P and (not blk or T_ <= blk[-1][0]) and (not gates or T_ <= gates[-1][0])
+                        and (not lps or T_ <= lps[-1][1]) and not any(P < h_ < T_ <= t_ for h_, t_ in heads.items())):
+                    loop_sif = True
             if vcc_sif:
                 T = tgt(args)
                 if (T is not None and T > P and (not blk or T <= blk[-1][0]) and (not gates or T <= gates[-1][0])
@@ -447,10 +458,16 @@ class Tr:
                     cond = {'s_cbranch_scc0': 'scc != 0u', 's_cbranch_scc1': 'scc == 0u', 's_cbranch_vccz': 'vcc', 's_cbranch_vccnz': '!vcc'}[op]
                     if SIF_ANY64 and self.kind == 'cs' and op.startswith('s_cbranch_vcc') and (lambda tg_: tg_[0] * tg_[1] * tg_[2] == 64)(self.decls.get('tg', (1, 1, 1))):
                         cond = 'any64_(vcc, flat)' if op == 's_cbranch_vccz' else '!any64_(vcc, flat)'; self.uses_any64 = True
-                    self.emit(f"[branch] if ({cond}) {{   // {op} {args}"); blk.append([T, len(self.body) - 1, [], (dict(self.sym), dict(self.cval), dict(self.sg), dict(self.origin))]); continue
+                    self.emit(f"[branch] if ({cond}) {{   // {op} {args}"); blk.append([T, len(self.body) - 1, [], (dict(self.sym), dict(self.cval), dict(self.sg), dict(self.origin))])
+                    # loop guard in a CS/predicated shader: let an `s_branch` over an else side close it as `} else {` too (it was
+                    # ignored, so the else side always overwrote the `then` result: the cloud-dome CS 5d28c20a replaced its cloud
+                    # texture sample with 1.0 -> no clouds). The 5th element marks the block as wave-uniform. NO_LOOP_SIF_ELSE=1 = old.
+                    if loop_sif and not structured and not _ENV.get('NO_LOOP_SIF_ELSE'): blk[-1].append(True)
+                    continue
             if (structured or (blk and len(blk[-1]) > 4)) and op == 's_branch' and blk:
                 T = tgt(args); nxt = int(ins[k + 1][0], 16) if k + 1 < len(ins) else None
-                if T is not None and nxt is not None and nxt == blk[-1][0] and T >= nxt and (len(blk) < 2 or T <= blk[-2][0]):
+                if (T is not None and nxt is not None and nxt == blk[-1][0] and T >= nxt and (len(blk) < 2 or T <= blk[-2][0])
+                        and (structured or not lps or T <= lps[-1][1])):
                     self.emit("} else {"); blk[-1][0] = T; blk[-1][2].append(len(self.body) - 1)
                     # the else side starts from the state at the branch, not from the end of the `then` side: restore the
                     # compile-time constants/symbolic offsets/descriptor tracking (a `then` that reused s2 for a float constant turned the
@@ -545,6 +562,17 @@ class Tr:
                 if op == 's_addc_u32' and (r1 - 1) in self.pcnext and (d - 1) in getattr(self, 'emb_tmp', {}) and cvv(A[2]) is not None:
                     self.embed_regs = getattr(self, 'embed_regs', {})
                     self.embed_regs[d - 1] = dict(base=self.emb_tmp[d - 1], stride=(cvv(A[2]) >> 16) & 0x3FFF); return
+        # Any other write to an SGPR that held s_getpc_b64's value ends that: the register is reused (cloud noise CS
+        # cf71f0d3: s_getpc s[12:13], then s12 = 0 as the octave counter, and its `s_add_u32 s12, s12, 1` was taken
+        # for an embedded-data address and dropped -> loop never counted, noise 1.0 everywhere, no clouds).
+        # OLD_PCNEXT=1 keeps the old behaviour.
+        if getattr(self, 'pcnext', None) and A and not _ENV.get('OLD_PCNEXT') and (op.startswith('s_') or op.startswith('v_cmp') or op.startswith('v_read')) \
+                and not (op.startswith('s_cmp') or op.startswith('s_cbranch') or op.startswith('s_bitcmp') or op in ('s_branch', 's_waitcnt', 's_nop', 's_endpgm', 's_barrier', 's_sendmsg', 's_setpc_b64', 's_buffer_store_dword', 's_getpc_b64')):
+            md_ = re.fullmatch(r's(\d+)|s\[(\d+):(\d+)\]', A[0].strip())
+            if md_:
+                lo_ = int(md_.group(1) or md_.group(2)); hi_ = int(md_.group(1) or md_.group(3))
+                for k_ in list(self.pcnext):
+                    if lo_ <= k_ + 1 and k_ <= hi_: self.pcnext.pop(k_, None)
         if op == 's_barrier':
             self.emit("GroupMemoryBarrierWithGroupSync();"); self.uses_lds = True; self.has_s_barrier = True; return
         if op in ('s_waitcnt', 's_nop', 's_endpgm', 's_branch', 's_sendmsg', 's_swappc_b64', 's_setpc_b64'): return

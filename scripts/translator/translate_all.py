@@ -57,10 +57,15 @@ sys.path.insert(0, HERE)
 #     translated as predicated, so the block always ran, and an `s_branch` over an else side made that side always
 #     overwrite the result. Now structured (whole 64-thread group = one GCN wave, or the wave where a group barrier is
 #     not safe). 102 CS change: the sky-to-ambient SH (haze never added), sky/fog raymarch results replaced by 0/1, etc.
-TRANSLATOR_REV = 15
+# 16: compute shaders: (a) a uniform forward s_cbranch_scc* (SCC from SGPRs/constants) was ignored, so its block always ran;
+#     now `[branch] if / else` like the loop guard (149 CS, incl. the cloud raymarch gate); (b) a loop guard block may take
+#     an else (cloud-dome CS 5d28c20a ignored its cloud texture sample); (c) an SGPR that held s_getpc_b64's value stops
+#     counting as a PC once rewritten (the cloud noise CS cf71f0d3 lost its octave counter increment -> noise 1.0
+#     everywhere, no clouds). Together: procedural clouds in the sky.
+TRANSLATOR_REV = 16
 RETRANSLATE = {2: ('vs', 'tess'), 3: ('vs', 'ps', 'cs'), 4: ('vs', 'ps', 'cs'), 5: ('vs',), 6: ('ps',), 7: ('ps',), 8: (), 9: ('cs',), 10: ('ps', 'cs'),
                11: ('vs', 'ps', 'cs'), 12: ('vs', 'ps', 'cs'), 13: ('vs', 'ps', 'cs'), 14: ('vs', 'ps', 'cs', 'tess'),
-               15: ('cs',)}
+               15: ('cs',), 16: ('cs',)}
 
 
 def say(*a):
