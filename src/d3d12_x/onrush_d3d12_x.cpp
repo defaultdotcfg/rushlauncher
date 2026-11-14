@@ -1012,7 +1012,7 @@ static void PollAltEnterToggle() {
   s_wasDown = down;
 }
 
-namespace mouse { static bool OnMessage(HWND, UINT, WPARAM, LPARAM, LRESULT *); static void Update(bool focused); }   // mouse.inc
+namespace mouse { static bool OnMessage(HWND, UINT, WPARAM, LPARAM, LRESULT *); static void Update(bool focused); static DWORD Buttons(bool focused); }   // mouse.inc
 static LRESULT CALLBACK DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                           LPARAM lParam) {
   { LRESULT r = 0; if (mouse::OnMessage(hwnd, msg, wParam, lParam, &r)) return r; }
@@ -4414,6 +4414,8 @@ static void PollInput(RawGamepadReading *pReading) {
     if (lu != ld) pReading->RightThumbstickY = lu ? 1.0f : -1.0f;
     if (ll != lr) pReading->RightThumbstickX = lr ? 1.0f : -1.0f;
   }
+  // mouse in the menus: click = A, right click = B, wheel = d-pad up/down
+  pReading->Buttons |= mouse::Buttons(focused);
 
   // Debug-only: periodically inject an 'A' press to walk past the title screen
   // unattended. OFF by default (it would otherwise press A every ~2 s during
