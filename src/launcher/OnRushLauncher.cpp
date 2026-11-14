@@ -56,7 +56,7 @@
 #define WM_GAME_STARTED     (WM_USER + 102)
 #define WM_GAME_EXITED      (WM_USER + 103)
 
-// Launcher colours: a warm dark theme (default) and a light one ("Tema" in the settings, onrush.ini [Launcher] Theme).
+// Launcher colours: a graphite dark theme (default) and a light one ("Tema" in the settings, onrush.ini [Launcher] Theme).
 struct Palette
 {
     bool dark;
@@ -67,21 +67,21 @@ struct Palette
 };
 static const Palette kPaletteDark = {
     true,
-    RGB(18, 14, 11), RGB(43, 30, 22), RGB(30, 22, 17), RGB(15, 12, 10), RGB(76, 55, 41),
-    RGB(226, 132, 67), RGB(145, 195, 133), RGB(220, 86, 62), RGB(244, 232, 215), RGB(181, 160, 139), RGB(166, 205, 145),
-    RGB(30, 22, 17),
-    RGB(52, 36, 26), RGB(51, 36, 27), RGB(58, 64, 74), RGB(245, 245, 245), RGB(49, 35, 26), RGB(63, 45, 33), RGB(194, 103, 50),
-    RGB(184, 66, 49), RGB(74, 58, 45),
-    RGB(66, 44, 31), RGB(239, 164, 103), RGB(244, 232, 215), RGB(48, 54, 64),
+    RGB(13, 14, 17), RGB(22, 23, 28), RGB(30, 32, 38), RGB(11, 12, 14), RGB(46, 48, 56),
+    RGB(240, 128, 52), RGB(120, 200, 140), RGB(232, 84, 72), RGB(238, 239, 243), RGB(146, 151, 163), RGB(150, 210, 160),
+    RGB(18, 19, 23),
+    RGB(28, 30, 36), RGB(34, 36, 44), RGB(62, 65, 76), RGB(250, 250, 252), RGB(34, 36, 43), RGB(46, 49, 58), RGB(206, 104, 36),
+    RGB(196, 64, 54), RGB(44, 46, 54),
+    RGB(64, 44, 30), RGB(255, 160, 100), RGB(255, 255, 255), RGB(48, 51, 60),
 };
 static const Palette kPaletteLight = {
     false,
-    RGB(244, 238, 230), RGB(252, 249, 244), RGB(239, 232, 222), RGB(250, 247, 242), RGB(214, 198, 180),
-    RGB(207, 106, 42), RGB(58, 132, 66), RGB(196, 60, 40), RGB(40, 30, 22), RGB(118, 100, 84), RGB(38, 104, 48),
-    RGB(250, 246, 240),
-    RGB(246, 236, 223), RGB(234, 222, 207), RGB(196, 186, 174), RGB(255, 255, 255), RGB(244, 237, 228), RGB(231, 219, 204), RGB(184, 90, 32),
-    RGB(170, 50, 32), RGB(226, 216, 205),
-    RGB(246, 224, 204), RGB(176, 82, 24), RGB(255, 252, 247), RGB(224, 215, 204),
+    RGB(240, 241, 245), RGB(255, 255, 255), RGB(240, 242, 246), RGB(250, 250, 252), RGB(216, 219, 227),
+    RGB(226, 110, 34), RGB(40, 140, 80), RGB(206, 58, 46), RGB(24, 26, 32), RGB(104, 110, 124), RGB(32, 116, 64),
+    RGB(247, 248, 250),
+    RGB(250, 251, 253), RGB(229, 232, 239), RGB(196, 200, 210), RGB(255, 255, 255), RGB(242, 243, 247), RGB(226, 229, 236), RGB(196, 90, 24),
+    RGB(184, 50, 40), RGB(230, 232, 237),
+    RGB(253, 232, 214), RGB(190, 84, 20), RGB(255, 255, 255), RGB(226, 229, 235),
 };
 static Palette g_pal = kPaletteDark;
 #define COLOR_BG_MAIN       g_pal.bgMain

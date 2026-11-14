@@ -307,11 +307,36 @@ static bool ProfUnlockSwitchOn(int id)
     return row >= 0 && (id == ID_PROF_UNLOCK ? ProfUnlocked(g_profNames[row]) : ProfAllUnlocked(g_profNames[row]));
 }
 
+// Profile rows drawn in the theme colours (the system list highlight is a bright blue).
+static void ProfDrawListItem(const DRAWITEMSTRUCT *di)
+{
+    HDC hdc = di->hDC;
+    RECT r = di->rcItem;
+    HBRUSH bg = CreateSolidBrush(COLOR_BG_INPUT); FillRect(hdc, &r, bg); DeleteObject(bg);
+    if ((int)di->itemID < 0) return;
+    bool sel = (di->itemState & ODS_SELECTED) != 0;
+    if (sel)
+    {
+        RECT rr = { r.left + 4, r.top + 2, r.right - 4, r.bottom - 2 };
+        FillRound(hdc, rr, 8, g_pal.comboSel, g_pal.comboSel);
+        RECT bar = { r.left + 4, r.top + 8, r.left + 7, r.bottom - 8 };
+        HBRUSH ab = CreateSolidBrush(COLOR_ACCENT_ORANGE); FillRect(hdc, &bar, ab); DeleteObject(ab);
+    }
+    wchar_t text[160] = {};
+    SendMessageW(di->hwndItem, LB_GETTEXT, di->itemID, (LPARAM)text);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, COLOR_TEXT_PRIMARY);
+    HGDIOBJ of = SelectObject(hdc, sel ? g_hFontUIBold : g_hFontUI);
+    RECT tr = { r.left + 16, r.top, r.right - 10, r.bottom };
+    DrawTextW(hdc, text, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    SelectObject(hdc, of);
+}
+
 static void ProfCreateControls(HWND hwnd)
 {
     const int X = UI_PANEL_X, W = UI_PANEL_W;
     DWORD od = WS_CHILD | WS_TABSTOP | BS_OWNERDRAW;
-    g_hProfList = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+    g_hProfList = CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
                                 X, 104, W, 190, hwnd, (HMENU)ID_PROF_LIST, nullptr, nullptr);
     SetWindowTheme(g_hProfList, g_pal.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
     g_hProfName = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, X + 10, 333, W - 20, 20, hwnd, (HMENU)ID_PROF_NAME, nullptr, nullptr);

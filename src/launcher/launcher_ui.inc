@@ -27,8 +27,6 @@ static HWND g_hBtnUpdate = nullptr;
 #define UI_PANEL_W  (UI_W - UI_HERO_W - 56)
 
 static ULONG_PTR g_gdiplusToken = 0;
-static Gdiplus::Bitmap *g_heroArt = nullptr;
-static unsigned g_heroGen = 0;   // bumped on every (re)load of the art: DrawHero rebuilds its scaled copy
 #include "logo_png.h"
 // The logo replaces the "RUSHLAUNCHER" text in the rail. Decoded once from the embedded PNG (the stream must outlive the bitmap).
 static Gdiplus::Bitmap *g_logo = nullptr;
@@ -260,41 +258,6 @@ static void ReadGameLangCombo(HWND combo, wchar_t *out, size_t n)
     else out[0] = L'\0';
 }
 
-static void LoadHeroArt(const wchar_t *gameDir)
-{
-    if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
-    const wchar_t *dirs[] = { gameDir, g_exeDir };
-    const wchar_t *subs[] = { L"", L"\\Mount" };
-    for (const wchar_t *d : dirs)
-    {
-        if (!d || !d[0]) continue;
-        for (const wchar_t *s : subs)
-        {
-            wchar_t p[MAX_PATH];
-            swprintf_s(p, MAX_PATH, L"%ls%ls\\SplashScreen.png", d, s);
-            // Bitmap::FromFile keeps the file open (shared read only) while the bitmap lives, which made
-            // the setup fail to overwrite SplashScreen.png (error 32): load it from memory instead.
-            HANDLE h = CreateFileW(p, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-            if (h == INVALID_HANDLE_VALUE) continue;
-            std::vector<BYTE> data;
-            LARGE_INTEGER sz = {};
-            if (GetFileSizeEx(h, &sz) && sz.QuadPart > 0 && sz.QuadPart < (64 << 20))
-            {
-                data.resize((size_t)sz.QuadPart);
-                DWORD got = 0;
-                if (!ReadFile(h, data.data(), (DWORD)data.size(), &got, nullptr) || got != data.size()) data.clear();
-            }
-            CloseHandle(h);
-            IStream *st = data.empty() ? nullptr : SHCreateMemStream(data.data(), (UINT)data.size());
-            if (!st) continue;
-            Gdiplus::Bitmap *b = Gdiplus::Bitmap::FromStream(st);  // holds its own reference to the stream
-            st->Release();
-            if (b && b->GetLastStatus() == Gdiplus::Ok) { g_heroArt = b; ++g_heroGen; return; }
-            delete b;
-        }
-    }
-}
-
 static bool GameDirLooksValid(const wchar_t *dir)
 {
     if (!dir || !dir[0]) return false;
@@ -317,7 +280,6 @@ static void RefreshGameDirStatus(HWND hwnd)
     wcscpy_s(tmp.gamePath, MAX_PATH, edit);
     GetEffectiveGameDir(&tmp, g_gameDirShown, MAX_PATH);
     g_gameDirOk = GameDirIsReady(g_gameDirShown);
-    if (!g_heroArt) LoadHeroArt(g_gameDirShown);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -483,6 +445,66 @@ static void LayoutLog(HWND hwnd)
 #include "photos_ui.inc"
 #include "controls_ui.inc"
 
+// Backdrop of the content column (Jogar, Configurações, Perfis): drawn by the launcher instead of the game's
+// splash art. Dark gradient, a warm glow and slanted "speed" bands in the accent colour, then the game name.
+// Rendered once per theme/language into a bitmap (every toggle repaints the window).
+static void DrawBackdrop(Gdiplus::Graphics &g)
+{
+    static Gdiplus::Bitmap *s_bmp = nullptr;
+    static int s_key = -1;
+    const int x0 = 216, w = UI_HERO_W - 216, h = UI_H;
+    const int key = (g_pal.dark ? 1 : 0) | (g_uiLang << 1);
+    if (!s_bmp || s_key != key)
+    {
+        delete s_bmp;
+        s_bmp = new Gdiplus::Bitmap(w, h, PixelFormat32bppPARGB);
+        Gdiplus::Graphics bg(s_bmp);
+        bg.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        bg.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+        const COLORREF acc = COLOR_ACCENT_ORANGE;
+        // base: slightly lifted at the top, the main background at the bottom
+        Gdiplus::LinearGradientBrush base(Gdiplus::Point(0, -1), Gdiplus::Point(0, h + 1), GPC(g_pal.homeCard), GPC(COLOR_BG_MAIN));
+        bg.FillRectangle(&base, 0, 0, w, h);
+        // warm glow in the lower right
+        {
+            Gdiplus::GraphicsPath gp;
+            gp.AddEllipse(Gdiplus::RectF(w * 0.05f, h * 0.38f, w * 1.5f, h * 0.9f));
+            Gdiplus::PathGradientBrush pg(&gp);
+            pg.SetCenterPoint(Gdiplus::PointF(w * 0.85f, h * 0.80f));
+            pg.SetCenterColor(GPCA(g_pal.dark ? 110 : 70, acc));
+            Gdiplus::Color edge = GPCA(0, acc); int cnt = 1;
+            pg.SetSurroundColors(&edge, &cnt);
+            bg.FillPath(&pg, &gp);
+        }
+        // speed bands: parallelograms leaning right, brighter towards the bottom
+        struct Band { float x, wd; int a; };
+        const Band bands[] = { { 4, 5, 110 }, { 46, 46, 34 }, { 120, 9, 150 }, { 150, 3, 200 },
+                               { 196, 70, 26 }, { 290, 14, 110 }, { 318, 4, 170 }, { 352, 30, 55 } };
+        const float slant = 300.f, top = h * 0.30f;
+        for (const Band &bd : bands)
+        {
+            Gdiplus::PointF pts[4] = { { bd.x, (float)h }, { bd.x + bd.wd, (float)h },
+                                       { bd.x + bd.wd + slant, top }, { bd.x + slant, top } };
+            Gdiplus::LinearGradientBrush lb(Gdiplus::PointF(0, top), Gdiplus::PointF(0, (float)h),
+                                            GPCA(0, acc), GPCA(g_pal.dark ? bd.a : bd.a * 3 / 4, acc));
+            lb.SetWrapMode(Gdiplus::WrapModeTileFlipXY);
+            bg.FillPolygon(&lb, pts, 4);
+        }
+        // game name and tag line
+        Gdiplus::FontFamily ffb(L"Segoe UI Black"), ff(L"Segoe UI");
+        Gdiplus::FontFamily *title = ffb.IsAvailable() ? &ffb : &ff;
+        Gdiplus::Font fTitle(title, 58, Gdiplus::FontStyleBoldItalic, Gdiplus::UnitPixel);
+        Gdiplus::Font fTag(&ff, 13, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+        Gdiplus::SolidBrush txt(GPC(COLOR_TEXT_PRIMARY)), accB(GPC(acc)), muted(GPC(COLOR_TEXT_MUTED));
+        bg.DrawString(L"ONRUSH", -1, &fTitle, Gdiplus::PointF(26, 70), &txt);
+        bg.FillRectangle(&accB, 34, 150, 44, 4);
+        static const wchar_t *kTag[] = { L"PORT NATIVO PARA PC", L"NATIVE PC PORT", L"PORT NATIVO PARA PC" };
+        bg.DrawString(kTag[g_uiLang], -1, &fTag, Gdiplus::PointF(32, 162), &muted);
+        s_key = key;
+    }
+    g.DrawImage(s_bmp, x0, 0, w, h);
+}
+
 static void DrawHero(HDC hdc)
 {
     Gdiplus::Graphics g(hdc);
@@ -491,32 +513,8 @@ static void DrawHero(HDC hdc)
     g.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
     Gdiplus::SolidBrush bg(GPC(COLOR_BG_MAIN));
     g.FillRectangle(&bg, 0, 0, UI_HERO_W, UI_H);
-    // Playlist, Fotos and Controles cover the art completely: skip it there.
-    if (g_heroArt && g_tab != 1 && g_tab != 4 && g_tab != 5)
-    {
-        // Keep the art in the content column; the left 216 px are reserved for navigation.
-        // Scaled once (bicubic from 1920x1080 cost ~60 ms per paint, and every toggle repaints the window).
-        static Gdiplus::Bitmap *s_scaled = nullptr;
-        static unsigned s_scaledGen = 0;
-        const int artW = UI_HERO_W - 216;
-        if (s_scaledGen != g_heroGen || !s_scaled)
-        {
-            delete s_scaled;
-            s_scaled = new Gdiplus::Bitmap(artW, UI_H, PixelFormat32bppPARGB);
-            Gdiplus::Graphics sg(s_scaled);
-            sg.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-            sg.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
-            float iw = (float)g_heroArt->GetWidth(), ih = (float)g_heroArt->GetHeight();
-            float sc = max((float)artW / iw, (float)UI_H / ih);
-            float dw = iw * sc, dh = ih * sc;
-            sg.DrawImage(g_heroArt, Gdiplus::RectF(((float)artW - dw) / 2.f, ((float)UI_H - dh) / 2.f, dw, dh));
-            s_scaledGen = g_heroGen;
-        }
-        Gdiplus::InterpolationMode im = g.GetInterpolationMode();
-        g.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
-        g.DrawImage(s_scaled, 216, 0, artW, UI_H);
-        g.SetInterpolationMode(im);
-    }
+    // Playlist, Fotos and Controles cover the column completely: skip the backdrop there.
+    if (g_tab != 1 && g_tab != 4 && g_tab != 5) DrawBackdrop(g);
     Gdiplus::SolidBrush railBase(GPC(COLOR_BG_MAIN));
     g.FillRectangle(&railBase, 0, 0, 216, UI_H);
     if (g_tab == 1) { PlDrawHero(g); return; }
@@ -528,10 +526,6 @@ static void DrawHero(HDC hdc)
         g.FillRectangle(&dim, 0, 0, UI_HERO_W, UI_H);
         return;
     }
-    Gdiplus::LinearGradientBrush fade(Gdiplus::Point(216, UI_H - 230), Gdiplus::Point(216, UI_H),
-                                      GPCA(0, COLOR_BG_MAIN), GPCA(245, COLOR_BG_MAIN));
-    fade.SetWrapMode(Gdiplus::WrapModeTileFlipXY);  // default tiling paints a dark seam on the first row
-    g.FillRectangle(&fade, 216, UI_H - 229, UI_HERO_W - 216, 229);
 
     Gdiplus::FontFamily ff(L"Segoe UI");
     Gdiplus::Font fStatus(&ff, 20, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
@@ -999,7 +993,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
             if (argv) LocalFree(argv);
         }
-        LoadHeroArt(initialGameDir);
         RefreshGameDirStatus(hwnd);
 
         SysSpecs specs = GetHostSpecs();
@@ -1030,7 +1023,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     {
         MEASUREITEMSTRUCT *mi = (MEASUREITEMSTRUCT *)lParam;
         if (mi->CtlType == ODT_COMBOBOX) { mi->itemHeight = 24; return TRUE; }
-        if (mi->CtlType == ODT_LISTBOX) { mi->itemHeight = 48; return TRUE; }
+        if (mi->CtlType == ODT_LISTBOX) { mi->itemHeight = mi->CtlID == ID_PROF_LIST ? 34 : 48; return TRUE; }
         break;
     }
 
@@ -1038,6 +1031,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     {
         const DRAWITEMSTRUCT *di = (const DRAWITEMSTRUCT *)lParam;
         if (di->CtlType == ODT_COMBOBOX) DrawComboItem(di);
+        else if (di->CtlType == ODT_LISTBOX && di->CtlID == ID_PROF_LIST) ProfDrawListItem(di);
         else if (di->CtlType == ODT_LISTBOX) PlDrawListItem(di);
         else if (di->CtlType == ODT_BUTTON) DrawOwnerButton(di);
         return TRUE;
@@ -1222,7 +1216,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                     if (!AskGameFolder(hwnd)) return 0;
                 }
                 ReadUiIntoConfig(); SaveIni();
-                if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
                 RefreshGameDirStatus(hwnd);
             }
             if (!GameAssetsReachable(g_gameDirShown) && !RelinkGameCopy(hwnd, g_gameDirShown)) return 0;
@@ -1293,7 +1286,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case ID_GAME_PATH_BROWSE:
             AskGameFolder(hwnd);
             ReadUiIntoConfig(); SaveIni();
-            if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
             RefreshGameDirStatus(hwnd);
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -1373,7 +1365,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         ReadUiIntoConfig();
         SaveIni();
         PlShutdown();
-        if (g_heroArt) { delete g_heroArt; g_heroArt = nullptr; }
         HFONT fonts[] = { g_hFontUI, g_hFontUIBold, g_hFontSmallCaps, g_hFontPlay, g_hFontLog };
         for (HFONT f : fonts) if (f) DeleteObject(f);
         HBRUSH brushes[] = { g_hBrushMain, g_hBrushCard, g_hBrushInput, g_hBrushLog };

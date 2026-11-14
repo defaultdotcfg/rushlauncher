@@ -16,6 +16,7 @@
 - **Mouse nos menus:** passar o mouse sobre uma opção a seleciona, o clique confirma, o botão direito volta e a roda sobe/desce. Nas opções com setas, clicar em ‹ ou › muda o valor. Funciona também no menu de pausa e na escolha de veículo.
 - O jogo abre bem mais rápido: a tela inicial não espera mais pelos servidores online, que não existem mais, e entra direto no modo offline.
 - O Discord agora mostra "RushLauncher" e a versão em uso.
+- **Launcher com visual novo:** cores grafite mais limpas nos temas escuro e claro, e a imagem do jogo deu lugar a um fundo próprio do launcher. A lista de perfis também segue as cores do tema.
 
 ### Correções
 - Alt+Enter agora alterna corretamente entre tela cheia e janela.
