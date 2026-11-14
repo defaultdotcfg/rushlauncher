@@ -14,6 +14,7 @@
 - Nova opção **Upscaler** em Configurações > Gráficos: **TAA** (o original do jogo) ou **FSR 2** (AMD), que deixa a imagem mais nítida quando a resolução interna está abaixo de 100%. Funciona em qualquer placa de vídeo e troca na hora.
 - Na corrida, o **mouse gira a câmera** (como o analógico direito); parado por um instante, a câmera volta para trás do carro. Dá para desligar ou ajustar a sensibilidade no `onrush.ini` ([Controls] MouseLook / MouseSensitivity).
 - **Mouse nos menus:** passar o mouse sobre uma opção a seleciona, o clique confirma, o botão direito volta e a roda sobe/desce. Nas opções com setas, clicar em ‹ ou › muda o valor. Funciona também no menu de pausa e na escolha de veículo.
+- Nova opção **Sair** no menu principal do jogo: fecha o jogo e volta para a área de trabalho, depois de confirmar.
 - O jogo abre bem mais rápido: a tela inicial não espera mais pelos servidores online, que não existem mais, e entra direto no modo offline.
 - O Discord agora mostra "RushLauncher" e a versão em uso.
 - **Launcher com visual novo:** cores grafite mais limpas nos temas escuro e claro, e a imagem do jogo deu lugar a um fundo próprio do launcher. A lista de perfis também segue as cores do tema.

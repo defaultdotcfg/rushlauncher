@@ -73,31 +73,40 @@ static void OnText(float value, int) {
 // The game's dialog box (what "opponent left" uses): requests are 0x58-byte entries from the pool at
 // [exe+0x1814B38] ({+0 entries, +0x10 free list data, +0x18 free list bytes}) shown by
 // exe+0x1E5660(5, page name [exe+0x1432B80], request). Request: +0 button keys, +8 button count,
-// +0x10 callback(ctx, ?, button), +0x18 ctx, +0x40 title key, +0x48 text key, +0x50 [exe+0x1814B40], +0x54 1.
-static const char *const kOkButton[] = {"ID_OK"};
+// +0x0C focused button, +0x10 callback(ctx, ?, button), +0x18 ctx, +0x28/+0x30 button enabled callback/ctx,
+// +0x40 title key, +0x48 text key, +0x50 [exe+0x1814B40], +0x54 1. The page (exe+0x3650B0) lets B/back pick
+// the button whose key is "ID_CANCEL" (exe+0x36FE50); without one, back does nothing.
+typedef void(__cdecl *PFN_DialogDone)(void *ctx, void *, int button);
 static void __cdecl DialogClosed(void *, void *, int) {}
 
-static void ShowVoiceNotice() {
+// Opens the game's dialog box; `buttons` are text keys, `done` gets the index of the chosen one.
+static bool ShowGameDialog(const char *title, const char *text, const char *const *buttons, int count,
+                           PFN_DialogDone done, int focus = 0) {
   uint8_t *exe = (uint8_t *)gfxopt::g_exe;
   uint8_t *pool = *(uint8_t **)(exe + 0x01814B38);
-  if (!pool || !*(uint8_t **)pool) return;
+  if (!pool || !*(uint8_t **)pool) return false;
   uint8_t *freeList = *(uint8_t **)(pool + 0x10);
   uint64_t &freeBytes = *(uint64_t *)(pool + 0x18);
-  if (!freeList || freeBytes < 4) return;
+  if (!freeList || freeBytes < 4) return false;
   uint32_t idx = *(uint32_t *)(freeList + freeBytes - 4);
   freeBytes -= 4;
   uint8_t *req = *(uint8_t **)pool + (uint64_t)idx * 0x58;
   memset(req, 0, 0x58);
-  *(const char *const **)(req + 0x00) = kOkButton;
-  *(uint64_t *)(req + 0x08) = 1;
-  *(void **)(req + 0x10) = (void *)&DialogClosed;
-  *(const char **)(req + 0x40) = "ID_RL_VOICE";
-  *(const char **)(req + 0x48) = "ID_RL_VOICE_NOTICE";
+  *(const char *const **)(req + 0x00) = buttons;
+  *(uint32_t *)(req + 0x08) = (uint32_t)count;
+  *(uint32_t *)(req + 0x0C) = (uint32_t)focus;
+  *(void **)(req + 0x10) = (void *)(done ? done : &DialogClosed);
+  *(const char **)(req + 0x40) = title;
+  *(const char **)(req + 0x48) = text;
   *(uint32_t *)(req + 0x50) = *(uint32_t *)(exe + 0x01814B40);
   *(uint8_t *)(req + 0x54) = 1;
   typedef void (*PFN_Show)(int, void *, void *);
   ((PFN_Show)(exe + 0x001E5660))(5, *(void **)(exe + 0x01432B80), req);
+  return true;
 }
+
+static const char *const kOkButton[] = {"ID_OK"};
+static void ShowVoiceNotice() { ShowGameDialog("ID_RL_VOICE", "ID_RL_VOICE_NOTICE", kOkButton, 1, nullptr); }
 
 static void OnVoice(float value, int) {
   LONG v = gfxopt::ListIndex(value, kCount + 1);

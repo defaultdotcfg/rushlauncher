@@ -7292,6 +7292,7 @@ static void PatchBootDoneFlag(HMODULE hExe) {
 #include "cameras.inc"
 #include "mouse.inc"
 #include "language.inc"
+#include "main_menu.inc"
 namespace ups { static void Install(HMODULE hExe); }   // upscaler.inc
 
 // Title screen without the dead online services. After "press A" the title state machine
@@ -7698,6 +7699,7 @@ static void PatchAllocThunk(HMODULE hExe) {
   cams::Install(hExe);
   mouse::Install(hExe);
   lang::Install(hExe);
+  mainmenu::Install(hExe);
   ups::Install(hExe);
   PatchSkipOnlineWait(hExe);
   PatchVoiceLanguage(hExe);
