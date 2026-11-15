@@ -10,6 +10,7 @@
   - **Limite de quadros:** de 30 a 240 FPS, ou sem limite.
   - **V-Sync:** ligado ou desligado.
   - **Ajustes detalhados:** resolução interna (50% a 200%), sombras, detalhe do cenário, detalhe dos veículos, tesselação, névoa, efeitos de luz e detritos. Ao escolher uma qualidade gráfica, todos eles mudam para os valores dela, e depois cada um pode ser ajustado à parte. Alguns ajustes só valem a partir da próxima corrida.
+  - As mesmas opções também aparecem em **Configurações no menu de pausa**, no lugar de "Elementos visuais", e podem ser trocadas no meio da corrida.
 - As escolhas ficam salvas para a próxima vez, e a opção V-Sync do launcher passou a funcionar.
 - Duas câmeras novas na corrida: **capô** e **cockpit** (primeira pessoa). O botão de trocar câmera (RB, ou E no teclado) agora alterna entre distante, próxima, capô e cockpit, e a última escolhida fica salva.
 - Nova página **Configurações > Vozes e texto**: o idioma dos textos muda na hora, sem reiniciar. O idioma das vozes também é escolhido ali e vale a partir da próxima vez que o jogo abrir (um aviso do próprio jogo lembra disso ao trocar).

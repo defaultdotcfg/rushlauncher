@@ -746,6 +746,21 @@ static void Install(HMODULE hExe) {
   *q++ = 0x48; *q++ = 0x83; *q++ = 0xC4; *q++ = 0x20; // add rsp, 20h
   *q++ = 0x49; *q++ = 0xBF; { void *cb = exe + 0x003B42C0; memcpy(q, &cb, 8); q += 8; }  // mov r15, Visuals cb
   q = EmitJmpAbs(q, exe + 0x0035514C);
+  // 3b. Second half of the builder: the single options page of the pause menu (name tags .. speaker type,
+  //     exe+0x355556..) ends with the same Visuals row ("Elementos visuais", exe+0x355933: `cmp byte
+  //     [Rendering/FPSVsQualityOption], r13b ; je 0x355988`). It is replaced by our rows, so the pause
+  //     menu has the same graphics options as Options > GRAPHICS; 0x355988 is the builder's epilogue.
+  uint8_t *pau = exe + 0x00355933;
+  uint8_t *pauStub = nullptr;
+  if (memcmp(pau, "\x44\x38\x2D", 3) == 0 && pau[7] == 0x74 && memcmp(exe + 0x00355988, "\x4C\x8D\x9C\x24", 4) == 0) {
+    pauStub = q;
+    *q++ = 0x48; *q++ = 0x89; *q++ = 0xD9;              // mov rcx, rbx (the pause options page)
+    *q++ = 0x48; *q++ = 0x83; *q++ = 0xEC; *q++ = 0x20; // sub rsp, 20h
+    *q++ = 0x48; *q++ = 0xB8; { void *f = (void *)&AddRows; memcpy(q, &f, 8); q += 8; }  // mov rax, AddRows
+    *q++ = 0xFF; *q++ = 0xD0;                           // call rax
+    *q++ = 0x48; *q++ = 0x83; *q++ = 0xC4; *q++ = 0x20; // add rsp, 20h
+    q = EmitJmpAbs(q, exe + 0x00355988);
+  }
   // 4. Config lookup exe+0x156FC0: `mov rax,rsp ; push rdi ; sub rsp,110h` (11 bytes) moved to a
   //    trampoline, entry jumps to HookCfgGet.
   uint8_t *cfg = exe + 0x00156FC0;
@@ -835,8 +850,9 @@ static void Install(HMODULE hExe) {
 
   bool okL = WriteJmpRel(loc, locStub, 5);
   bool okB = okL && WriteJmpRel(bld, bldStub, 7);
-  log_line("[gfx] graphics rows %s (texts %d, builder %d); fps limit %d, vsync %ld\r\n",
-           okB ? "installed" : "NOT installed", okL, okB, kFpsChoices[g_fpsIdx], (long)g_vsync);
+  bool okPause = okL && pauStub && WriteJmpRel(pau, pauStub, 9);
+  log_line("[gfx] graphics rows %s (texts %d, builder %d, pause menu %d); fps limit %d, vsync %ld\r\n",
+           okB ? "installed" : "NOT installed", okL, okB, okPause, kFpsChoices[g_fpsIdx], (long)g_vsync);
 }
 
 // ---- presentation -------------------------------------------------------------------------------

@@ -4249,13 +4249,13 @@ static const DWORD PAD_MENU = 0x4, PAD_VIEW = 0x8, PAD_A = 0x10, PAD_B = 0x20,
 namespace gfxopt { static void DiagTick(); }
 static DWORD ScriptedButtons() {
   struct ScriptPress { char b; double t; };
-  static ScriptPress s_sp[32]; static volatile LONG s_init = 0; static int s_spN = 0; static ULONGLONG s_t0 = 0;
+  static ScriptPress s_sp[160]; static volatile LONG s_init = 0; static int s_spN = 0; static ULONGLONG s_t0 = 0;
   if (InterlockedCompareExchange(&s_init, 1, 0) == 0) {
     s_t0 = GetTickCount64();
-    char sb[512] = {};
+    static char sb[2048] = {};
     if (GetEnvironmentVariableA("ONRUSH_PRESS_SCRIPT", sb, sizeof(sb)) > 0) {
       char *ctx = nullptr; int n = 0;
-      for (char *tok = strtok_s(sb, ",", &ctx); tok && n < 32; tok = strtok_s(nullptr, ",", &ctx)) {
+      for (char *tok = strtok_s(sb, ",", &ctx); tok && n < (int)_countof(s_sp); tok = strtok_s(nullptr, ",", &ctx)) {
         char *at = strchr(tok, '@');
         if (at) { s_sp[n].b = (char)toupper((unsigned char)tok[0]); s_sp[n].t = atof(at + 1); n++; }
       }
