@@ -628,7 +628,7 @@ static void PlUpdateVisibility(HWND hwnd)
 {
     bool pl = g_tab == 1, settingsPage = g_tab == 2;
     int s = settingsPage ? SW_SHOW : SW_HIDE, p = pl ? SW_SHOW : SW_HIDE;
-    HWND settings[] = { g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hVsyncChk, g_hDiscordChk,
+    HWND settings[] = { g_hResCombo, g_hModeCombo, g_hAspectCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hVsyncChk, g_hDiscordChk,
                         g_hSkipIntroChk, g_hSaveEdit, g_hAdvBtn, GetDlgItem(hwnd, ID_SAVE_BROWSE), g_hMinimizeChk, g_hThemeCombo };
     for (HWND h : settings) if (h) ShowWindow(h, s);
     ShowWindow(g_hGamePathEdit, g_tab == 0 ? SW_SHOW : SW_HIDE);

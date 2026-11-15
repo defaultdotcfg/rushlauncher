@@ -51,6 +51,7 @@
 #define ID_LOG_EDIT         1014
 #define ID_GAME_PATH_EDIT   1015
 #define ID_GAME_PATH_BROWSE 1016
+#define ID_ASPECT_COMBO     1017
 
 #define WM_APPEND_LOG       (WM_USER + 101)
 #define WM_GAME_STARTED     (WM_USER + 102)
@@ -138,6 +139,7 @@ static HWND g_hBtnLaunch = nullptr;
 static HWND g_hBtnKill = nullptr;
 static HWND g_hResCombo = nullptr;
 static HWND g_hModeCombo = nullptr;
+static HWND g_hAspectCombo = nullptr;
 static HWND g_hVsyncChk = nullptr;
 static HWND g_hD3DDebugChk = nullptr;
 static HWND g_hVerboseChk = nullptr;

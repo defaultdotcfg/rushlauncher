@@ -10,6 +10,7 @@
   - **Limite de quadros:** de 30 a 240 FPS, ou sem limite.
   - **V-Sync:** ligado ou desligado.
   - **Ajustes detalhados:** resolução interna (50% a 200%), sombras, detalhe do cenário, detalhe dos veículos, tesselação, névoa, efeitos de luz e detritos. Ao escolher uma qualidade gráfica, todos eles mudam para os valores dela, e depois cada um pode ser ajustado à parte. Alguns ajustes só valem a partir da próxima corrida.
+  - **Modo de tela, proporção de tela e resolução:** o modo de tela (sem bordas, janela ou tela cheia) muda na hora; a resolução, agora com opções 16:10, 21:9 e 32:9 de verdade, vale a partir da próxima vez que o jogo abrir.
   - As mesmas opções também aparecem em **Configurações no menu de pausa**, no lugar de "Elementos visuais", e podem ser trocadas no meio da corrida.
 - As escolhas ficam salvas para a próxima vez, e a opção V-Sync do launcher passou a funcionar.
 - Duas câmeras novas na corrida: **capô** e **cockpit** (primeira pessoa). O botão de trocar câmera (RB, ou E no teclado) agora alterna entre distante, próxima, capô e cockpit, e a última escolhida fica salva.
@@ -29,7 +30,8 @@
 - Trocar a qualidade gráfica de Console para Ultra com o jogo aberto não fecha mais o jogo.
 - Alt+Enter agora alterna corretamente entre tela cheia e janela.
 - O log do launcher não cobre mais o menu lateral.
-- A lista de resoluções do launcher está em ordem, da menor para a maior.
+- A resolução escolhida agora é a resolução real do jogo (antes a imagem era sempre 1920×1080 esticada), e telas ultrawide mostram a corrida inteira na largura, sem distorção.
+- O launcher ganhou a opção **Proporção de tela**, e a lista de resoluções acompanha a proporção escolhida.
 - Iluminação mais fiel ao Xbox: a bruma do céu volta a entrar na luz ambiente, e vários efeitos de céu, névoa e tela que saíam apagados agora aparecem.
 - As nuvens voltaram ao céu, e o horizonte ganhou a bruma clara do Xbox.
 

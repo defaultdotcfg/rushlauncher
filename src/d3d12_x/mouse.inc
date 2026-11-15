@@ -190,9 +190,10 @@ static bool CursorUI(float *ux, float *uy, bool *inside) {
   const float cw = (float)(rc.right - rc.left), ch = (float)(rc.bottom - rc.top);
   if (cw < 1 || ch < 1) return false;
   *inside = p.x >= 0 && p.y >= 0 && p.x < rc.right && p.y < rc.bottom;
-  // the UI canvas (1920x1080) fills the window
-  *ux = ((float)p.x / cw - 0.5f) * 1920.0f;
-  *uy = (0.5f - (float)p.y / ch) * 1080.0f;
+  // the UI canvas (1920x1080) is fitted and centred in the output, which fills the window (same aspect)
+  const float scale = min(cw / 1920.0f, ch / 1080.0f);
+  *ux = ((float)p.x - cw * 0.5f) / scale;
+  *uy = (ch * 0.5f - (float)p.y) / scale;
   return true;
 }
 

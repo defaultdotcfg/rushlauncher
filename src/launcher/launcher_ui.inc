@@ -123,7 +123,7 @@ enum UiStr {
     S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL,
     S_HOME_TITLE, S_HOME_HINT, S_INSTALL_TITLE, S_INSTALL_HINT, S_INSTALL_READY, S_INSTALL_MISSING,
     S_PATCH_ASK, S_PICK_PATCH, S_BAD_PATCH, S_PATCH_CONFIRM, S_PATCH_PROGRESS, S_PATCH_FAIL, S_HOME_PROFILE, S_HOME_PLAYTIME,
-    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_OLD_GAME, S_LOST_COPY, S_COUNT
+    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_OLD_GAME, S_LOST_COPY, S_ASPECT, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -231,6 +231,7 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"A pasta do jogo foi preparada a partir da cópia do ONRUSH em\n%ls\nmas essa pasta não existe mais (foi movida, renomeada ou apagada).\n\nEscolha onde está a sua cópia do ONRUSH (o pacote extraído) para o launcher ligar a pasta do jogo a ela de novo.",
       L"The game folder was set up from the ONRUSH copy at\n%ls\nbut that folder no longer exists (it was moved, renamed or deleted).\n\nChoose where your ONRUSH copy (the extracted package) is now so the launcher can point the game folder at it again.",
       L"La carpeta del juego se preparó a partir de la copia de ONRUSH en\n%ls\npero esa carpeta ya no existe (se movió, renombró o borró).\n\nElige dónde está tu copia de ONRUSH (el paquete extraído) para que el launcher vuelva a enlazar la carpeta del juego con ella." },
+    { L"Proporção de tela", L"Aspect ratio", L"Relación de aspecto" },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
 
@@ -540,9 +541,10 @@ static void DrawPanel(HDC hdc)
     TextOutW(hdc, UI_PANEL_X, 20, T(S_SETTINGS), (int)wcslen(T(S_SETTINGS)));
     SelectObject(hdc, g_hFontUI);
     SetTextColor(hdc, COLOR_TEXT_PRIMARY);
-    const int half = (UI_PANEL_W - 12) / 2, X2 = UI_PANEL_X + half + 12;
+    const int half = (UI_PANEL_W - 12) / 2, X2 = UI_PANEL_X + half + 12, third = (UI_PANEL_W - 24) / 3;
     struct { int x, y; const wchar_t *t; } labels[] = {
-        { UI_PANEL_X, 58, T(S_RES) }, { X2, 58, T(S_MODE) }, { UI_PANEL_X, 120, T(S_TEXTLANG) }, { X2, 120, T(S_VOICELANG) },
+        { UI_PANEL_X, 58, T(S_MODE) }, { UI_PANEL_X + third + 12, 58, T(S_ASPECT) }, { UI_PANEL_X + 2 * (third + 12), 58, T(S_RES) },
+        { UI_PANEL_X, 120, T(S_TEXTLANG) }, { X2, 120, T(S_VOICELANG) },
         { UI_PANEL_X, 256, T(S_PHOTO) }, { X2, 256, T(S_THEME) }, { UI_PANEL_X, 320, T(S_SAVEDIR) } };
     for (auto &l : labels) TextOutW(hdc, l.x, l.y, l.t, (int)wcslen(l.t));
     GfxDrawColumn(hdc);
@@ -673,15 +675,59 @@ static void BrowseFolder(HWND hwnd, HWND edit, const wchar_t *title)
     CoTaskMemFree(pidl);
 }
 
-// Output resolutions, smallest to largest.
-static const struct { int w, h; } kResList[] = { { 1280, 720 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };
-static const int kResDefault = 1;   // 1920 x 1080
+// Output resolutions by aspect ratio, smallest to largest (the same lists as the game's GRAPHICS page,
+// src/d3d12_x/gfx_options.inc).
+struct ResSize { int w, h; };
+static const ResSize kRes16x9[] = { { 1280, 720 }, { 1600, 900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };
+static const ResSize kRes16x10[] = { { 1280, 800 }, { 1440, 900 }, { 1680, 1050 }, { 1920, 1200 }, { 2560, 1600 } };
+static const ResSize kRes21x9[] = { { 2560, 1080 }, { 3440, 1440 }, { 3840, 1600 }, { 5120, 2160 } };
+static const ResSize kRes32x9[] = { { 3840, 1080 }, { 5120, 1440 } };
+static const struct { const wchar_t *name; const ResSize *res; int count, def; } kAspects[] = {
+    { L"16:9", kRes16x9, (int)_countof(kRes16x9), 2 }, { L"16:10", kRes16x10, (int)_countof(kRes16x10), 3 },
+    { L"21:9", kRes21x9, (int)_countof(kRes21x9), 0 }, { L"32:9", kRes32x9, (int)_countof(kRes32x9), 0 } };
+
+// Aspect ratio and list entry of a size (else the nearest aspect ratio and width).
+static void FindRes(int w, int h, int *aspect, int *idx)
+{
+    double best = 1e18;
+    *aspect = 0; *idx = 2;
+    if (w <= 0 || h <= 0) return;
+    for (int a = 0; a < (int)_countof(kAspects); ++a)
+        for (int i = 0; i < kAspects[a].count; ++i)
+        {
+            const ResSize &r = kAspects[a].res[i];
+            double d = fabs((double)r.w / r.h - (double)w / h) * 100000.0 + abs(r.w - w);
+            if (d < best) { best = d; *aspect = a; *idx = i; }
+        }
+}
+
+// Resolution list of the chosen aspect ratio.
+static void FillResCombo(int aspect, int sel)
+{
+    SendMessageW(g_hResCombo, CB_RESETCONTENT, 0, 0);
+    for (int i = 0; i < kAspects[aspect].count; ++i)
+    {
+        wchar_t t[32]; swprintf_s(t, L"%d × %d", kAspects[aspect].res[i].w, kAspects[aspect].res[i].h);
+        SendMessageW(g_hResCombo, CB_ADDSTRING, 0, (LPARAM)t);
+    }
+    SendMessageW(g_hResCombo, CB_SETCURSEL, sel, 0);
+}
+
+static void ShowConfigRes()
+{
+    int a, i;
+    FindRes(g_config.width, g_config.height, &a, &i);
+    SendMessageW(g_hAspectCombo, CB_SETCURSEL, a, 0);
+    FillResCombo(a, i);
+}
 
 static void ReadUiIntoConfig()
 {
+    int a = (int)SendMessageW(g_hAspectCombo, CB_GETCURSEL, 0, 0);
+    if (a < 0 || a >= (int)_countof(kAspects)) a = 0;
     int sel = (int)SendMessageW(g_hResCombo, CB_GETCURSEL, 0, 0);
-    if (sel < 0 || sel >= (int)_countof(kResList)) sel = kResDefault;
-    g_config.width = kResList[sel].w; g_config.height = kResList[sel].h;
+    if (sel < 0 || sel >= kAspects[a].count) sel = kAspects[a].def;
+    g_config.width = kAspects[a].res[sel].w; g_config.height = kAspects[a].res[sel].h;
     int modeSel = (int)SendMessageW(g_hModeCombo, CB_GETCURSEL, 0, 0);
     wcscpy_s(g_config.windowMode, 32, modeSel == 1 ? L"Windowed" : modeSel == 2 ? L"Fullscreen" : L"Borderless");
     g_config.vsync = g_vsyncOn ? 1 : 0;
@@ -822,7 +868,7 @@ static void ApplyTheme(HWND hwnd, bool dark)
     CreateThemeBrushes();
     BOOL d = dark ? TRUE : FALSE;
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &d, sizeof(d));
-    HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hThemeCombo, g_hPlCombo };
+    HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hAspectCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hThemeCombo, g_hPlCombo };
     for (HWND c : combos) if (c) SetWindowTheme(c, dark ? L"DarkMode_CFD" : L"CFD", nullptr);
     GfxApplyTheme(dark);
     HWND lists[] = { g_hLogEdit, g_hProfList, g_hPhList, g_hKbList, g_hPlList };
@@ -869,23 +915,20 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         for (auto s : kUiLangNames) SendMessageW(g_hUiLangCombo, CB_ADDSTRING, 0, (LPARAM)s);
         SendMessageW(g_hUiLangCombo, CB_SETCURSEL, g_uiLang, 0);
 
-        g_hResCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 78, HALF, 300, hwnd, (HMENU)ID_RES_COMBO, nullptr, nullptr);
-        int resSel = kResDefault;
-        for (int i = 0; i < (int)_countof(kResList); ++i)
-        {
-            wchar_t t[32]; swprintf_s(t, L"%d × %d", kResList[i].w, kResList[i].h);
-            SendMessageW(g_hResCombo, CB_ADDSTRING, 0, (LPARAM)t);
-            if (kResList[i].w == g_config.width && kResList[i].h == g_config.height) resSel = i;
-        }
-        SendMessageW(g_hResCombo, CB_SETCURSEL, resSel, 0);
+        // display mode | aspect ratio | resolution
+        const int THIRD = (W - 24) / 3;
+        g_hModeCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 78, THIRD, 300, hwnd, (HMENU)ID_MODE_COMBO, nullptr, nullptr);
+        g_hAspectCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X + THIRD + 12, 78, THIRD, 300, hwnd, (HMENU)ID_ASPECT_COMBO, nullptr, nullptr);
+        for (auto &a : kAspects) SendMessageW(g_hAspectCombo, CB_ADDSTRING, 0, (LPARAM)a.name);
+        g_hResCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X + 2 * (THIRD + 12), 78, THIRD, 300, hwnd, (HMENU)ID_RES_COMBO, nullptr, nullptr);
+        ShowConfigRes();
 
-        g_hModeCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 78, HALF, 300, hwnd, (HMENU)ID_MODE_COMBO, nullptr, nullptr);
         // game text / voice language (filled by ApplyUiLanguage)
         g_hTextLangCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 140, HALF, 300, hwnd, (HMENU)ID_TEXTLANG_COMBO, nullptr, nullptr);
         g_hVoiceLangCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 140, HALF, 300, hwnd, (HMENU)ID_VOICELANG_COMBO, nullptr, nullptr);
         g_hPhotoFmtCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X, 276, HALF, 200, hwnd, (HMENU)ID_PHOTOFMT_COMBO, nullptr, nullptr);
         g_hThemeCombo = CreateWindowW(WC_COMBOBOXW, L"", comboStyle, X2, 276, HALF, 200, hwnd, (HMENU)ID_THEME_COMBO, nullptr, nullptr);
-        HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hThemeCombo };
+        HWND combos[] = { g_hUiLangCombo, g_hResCombo, g_hModeCombo, g_hAspectCombo, g_hTextLangCombo, g_hVoiceLangCombo, g_hPhotoFmtCombo, g_hThemeCombo };
         for (HWND c : combos) SetWindowTheme(c, g_pal.dark ? L"DarkMode_CFD" : L"CFD", nullptr);
 
         DWORD od = WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_OWNERDRAW;
@@ -1112,6 +1155,12 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             g_config.vsync = GetPrivateProfileIntW(L"Display", L"VSync", g_config.vsync, ini);
             g_config.gfxPreset = GetPrivateProfileIntW(L"Graphics", L"Preset", g_config.gfxPreset, ini);
             g_config.fpsLimit = GetPrivateProfileIntW(L"Graphics", L"FpsLimit", g_config.fpsLimit, ini);
+            g_config.width = GetPrivateProfileIntW(L"Display", L"Width", g_config.width, ini);
+            g_config.height = GetPrivateProfileIntW(L"Display", L"Height", g_config.height, ini);
+            GetPrivateProfileStringW(L"Display", L"WindowMode", g_config.windowMode, g_config.windowMode, 32, ini);
+            if (g_hAspectCombo) ShowConfigRes();
+            if (g_hModeCombo)
+                SendMessageW(g_hModeCombo, CB_SETCURSEL, _wcsicmp(g_config.windowMode, L"Windowed") == 0 ? 1 : _wcsicmp(g_config.windowMode, L"Fullscreen") == 0 ? 2 : 0, 0);
             LoadGfxDetails(ini, &g_config);
             GfxFill(true);
             g_vsyncOn = g_config.vsync != 0;
@@ -1280,6 +1329,16 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 if (sel >= 0 && sel < 3 && sel != g_uiLang) { g_uiLang = sel; ApplyUiLanguage(hwnd); ReadUiIntoConfig(); SaveIni(); }
             }
             return 0;
+        case ID_ASPECT_COMBO:
+            if (code == CBN_SELCHANGE)
+            {
+                int a = (int)SendMessageW(g_hAspectCombo, CB_GETCURSEL, 0, 0);
+                if (a >= 0 && a < (int)_countof(kAspects)) FillResCombo(a, kAspects[a].def);
+                ReadUiIntoConfig(); SaveIni();
+            }
+            return 0;
+        case ID_RES_COMBO:
+        case ID_MODE_COMBO:
         case ID_TEXTLANG_COMBO:
         case ID_VOICELANG_COMBO:
         case ID_PHOTOFMT_COMBO:

@@ -106,6 +106,7 @@ static bool ShowGameDialog(const char *title, const char *text, const char *cons
 }
 
 static const char *const kOkButton[] = {"ID_OK"};
+static void ShowNotice(const char *title, const char *text) { ShowGameDialog(title, text, kOkButton, 1, nullptr); }
 static void ShowVoiceNotice() { ShowGameDialog("ID_RL_VOICE", "ID_RL_VOICE_NOTICE", kOkButton, 1, nullptr); }
 
 static void OnVoice(float value, int) {

@@ -6,6 +6,9 @@
 // exe+0x22DFA0, so new keys ("ID_RL_*") get their text from a hook on that lookup.
 //
 // Rows (inserted where the console builds add "Visuals" on Xbox One X):
+//  * Display mode (borderless / windowed / fullscreen, at once, display.inc), aspect ratio and
+//    resolution (the output size: the game's display is created once at start, so a new size is saved
+//    for the next start).
 //  * Graphics quality: Console (the Xbox One profile) or the PC profiles the developers shipped in
 //    code:graphics/viewquality.cfg (QualityConfig-PC-UltraLow .. -UltraHigh: render scale, shadow
 //    maps, LOD bias, tessellation). The game applies a quality profile through exe+0x3DCD60 (profile
@@ -21,6 +24,8 @@
 // Choices persist in the launcher's onrush.ini (ONRUSH_INI) and come back through the environment.
 
 #include <dxgi1_5.h>
+
+namespace lang { static void ShowNotice(const char *title, const char *text); }  // language.inc
 
 namespace gfxopt {
 
@@ -103,8 +108,8 @@ static const Text kTexts[] = {
   {"ID_RL_OFF", {"OFF", "DESLIGADO", "DÉSACTIVÉE", "DESACTIVADO", "AUS", "DISATTIVATO", "WYŁĄCZONE"}},
   {"ID_RL_ON", {"ON", "LIGADO", "ACTIVÉE", "ACTIVADO", "AN", "ATTIVATO", "WŁĄCZONE"}},
   // detail rows
-  {"ID_RL_RES", {"RENDER RESOLUTION", "RESOLUÇÃO INTERNA", "RÉSOLUTION RENDU", "RESOLUCIÓN",
-                 "RENDERAUFLÖSUNG", "RISOLUZIONE", "ROZDZIELCZOŚĆ"}},
+  {"ID_RL_RES", {"RENDER RESOLUTION", "RESOLUÇÃO INTERNA", "RÉSOLUTION RENDU", "RES. INTERNA",
+                 "RENDERAUFLÖSUNG", "RIS. INTERNA", "ROZDZ. RENDERU"}},
   {"ID_RL_SHADOWS", {"SHADOWS", "SOMBRAS", "OMBRES", "SOMBRAS", "SCHATTEN", "OMBRE", "CIENIE"}},
   {"ID_RL_WORLD", {"WORLD DETAIL", "DETALHE CENÁRIO", "DÉTAILS DU DÉCOR", "DETALLE ESCENARIO",
                    "WELTDETAILS", "DETTAGLI SCENARIO", "SZCZEGÓŁY ŚWIATA"}},
@@ -126,6 +131,25 @@ static const Text kTexts[] = {
   {"ID_RL_FEW", {"FEW", "POUCOS", "PEU", "POCOS", "WENIG", "POCHI", "MAŁO"}},
   {"ID_RL_MANY", {"MANY", "MUITOS", "BEAUCOUP", "MUCHOS", "VIELE", "MOLTI", "DUŻO"}},
   {"ID_RL_NORMAL", {"NORMAL", "NORMAL", "NORMAL", "NORMAL", "NORMAL", "NORMALE", "NORMALNIE"}},
+  // display rows
+  {"ID_RL_WINMODE", {"DISPLAY MODE", "MODO DE TELA", "MODE D'AFFICHAGE", "MODO DE PANTALLA", "ANZEIGEMODUS",
+                     "MODALITÀ SCHERMO", "TRYB EKRANU"}},
+  {"ID_RL_WM_BORDERLESS", {"BORDERLESS", "SEM BORDAS", "SANS BORDURE", "SIN BORDES", "RAHMENLOS", "SENZA BORDI",
+                           "BEZ RAMEK"}},
+  {"ID_RL_WM_WINDOWED", {"WINDOWED", "JANELA", "FENÊTRÉ", "VENTANA", "FENSTER", "FINESTRA", "OKNO"}},
+  {"ID_RL_WM_FULLSCREEN", {"FULLSCREEN", "TELA CHEIA", "PLEIN ÉCRAN", "PANTALLA COMPLETA", "VOLLBILD",
+                           "SCHERMO INTERO", "PEŁNY EKRAN"}},
+  {"ID_RL_ASPECT", {"ASPECT RATIO", "PROPORÇÃO DE TELA", "FORMAT D'IMAGE", "RELACIÓN ASPECTO", "SEITENVERHÄLTNIS",
+                    "PROPORZIONI", "PROPORCJE OBRAZU"}},
+  {"ID_RL_DISPLAY_RES", {"RESOLUTION", "RESOLUÇÃO", "RÉSOLUTION", "RESOLUCIÓN", "AUFLÖSUNG", "RISOLUZIONE",
+                         "ROZDZIELCZOŚĆ"}},
+  {"ID_RL_RES_NOTICE", {"The new resolution will be used the next time you start ONRUSH.",
+                        "A nova resolução será usada na próxima vez que você iniciar ONRUSH.",
+                        "La nouvelle résolution sera utilisée au prochain lancement d'ONRUSH.",
+                        "La nueva resolución se usará la próxima vez que inicies ONRUSH.",
+                        "Die neue Auflösung wird beim nächsten Start von ONRUSH verwendet.",
+                        "La nuova risoluzione verrà usata al prossimo avvio di ONRUSH.",
+                        "Nowa rozdzielczość zostanie użyta przy następnym uruchomieniu ONRUSH."}},
   {"ID_RL_UPSCALER", {"UPSCALER", "UPSCALER", "MISE À L'ÉCHELLE", "ESCALADO", "UPSCALER", "UPSCALER", "SKALOWANIE"}},
   {"ID_RL_UPS_TAA", {"TAA", "TAA", "TAA", "TAA", "TAA", "TAA", "TAA"}},
   {"ID_RL_UPS_FSR2", {"FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2"}},
@@ -184,6 +208,8 @@ static const char *HookLocalise(const char *key) {
       if (strcmp(key, kFpsKeys[i]) == 0) return kFpsLabels[i];
     for (int i = 0; i < (int)_countof(kPctKeys); ++i)
       if (strcmp(key, kPctKeys[i]) == 0) return kPctLabels[i];
+    // aspect ratios and resolutions: the text is the key's tail ("ID_RL_AR_16:9", "ID_RL_DR_2560x1440")
+    if ((key[6] == 'A' && key[7] == 'R' || key[6] == 'D' && key[7] == 'R') && key[8] == '_') return key + 9;
     for (const Text &t : kTexts)
       if (strcmp(key, t.key) == 0) return t.t[TextLang()];
   }
@@ -287,13 +313,13 @@ static void BuildRules() {
   Rule r[kMaxRules];
   LONG n = 0;
   LONG v = g_detail[D_RES];
-  if (Custom(D_RES)) {
-    // Render size = display size x scale, capped by MaxRender*: the cap is raised to exactly what the
-    // chosen scale needs at the window's resolution (render targets are sized from it, so a larger
-    // cap only wastes GPU memory). The TAA history keeps the preset's size.
+  {
+    // Render size = output size x scale, capped by MaxRender*: the cap is set to exactly what the chosen
+    // scale needs at the output size (render targets are sized from it, so a larger cap only wastes GPU
+    // memory). Always set: the profiles' caps are made for a 1920x1080 output (at 1920x1080 the rule
+    // gives each preset's own render size).
     float s = kPctScale[v];
-    int w = EnvInt("ONRUSH_RES_WIDTH", 1920), h = EnvInt("ONRUSH_RES_HEIGHT", 1080);
-    if (w < 640 || h < 360) { w = 1920; h = 1080; }
+    int w = display::g_w, h = display::g_h;
     AddRule(r, n, "Memory/DisplayToRenderScale", CT_FLOAT, RM_SET, s);
     AddRule(r, n, "Memory/MaxRenderWidth", CT_INT, RM_SET, (float)(((int)(w * s) + 7) & ~7));
     AddRule(r, n, "Memory/MaxRenderHeight", CT_INT, RM_SET, (float)(((int)(h * s) + 7) & ~7));
@@ -449,7 +475,8 @@ static_assert(sizeof(MenuItem) == 0x40, "menu item layout");
 static const char *const kPresetKeys[] = {"ID_RL_Q_CONSOLE", "ID_RL_Q_ULTRALOW", "ID_RL_Q_LOW",
                                           "ID_RL_Q_MEDIUM", "ID_RL_Q_HIGH", "ID_RL_Q_ULTRA"};
 static const char *const kOnOffKeys[] = {"ID_RL_OFF", "ID_RL_ON"};
-enum : uint32_t { kIdQuality = 0x52, kIdFps = 0x53, kIdVsync = 0x54, kIdDetail0 = 0x55, kIdUpscaler = 0x5D };
+enum : uint32_t { kIdQuality = 0x52, kIdFps = 0x53, kIdVsync = 0x54, kIdDetail0 = 0x55, kIdUpscaler = 0x5D,
+                  kIdWinMode = 0x5E, kIdAspect = 0x5F, kIdDisplayRes = 0x60 };
 
 static int ListIndex(float v, int count) {
   int i = (int)(v + 0.5f);
@@ -487,7 +514,9 @@ static void RememberPage(uint8_t *page) {
   for (uint8_t *p : g_pages) if (p == page) return;
   g_pages[(InterlockedIncrement(&g_pageNext) - 1) & 7] = page;
 }
-static void ShowDetailValues() {
+// Rewrites row `id` (named `name`) in every remembered page: its value and, when `values` is given, its
+// value list.
+static void SetRow(uint32_t id, const char *name, float value, const char *const *values = nullptr, uint32_t count = 0) {
   void *invoker = (uint8_t *)g_exe + 0x0035E960;
   for (int k = 0; k < 8; ++k) {
     uint8_t *page = g_pages[k];
@@ -497,17 +526,97 @@ static void ShowDetailValues() {
       size_t bytes = *(size_t *)(page + 0x10), n = bytes / sizeof(MenuItem);
       if (!items || n > 256 || n * sizeof(MenuItem) != bytes) { g_pages[k] = nullptr; continue; }
       for (size_t i = 0; i < n; ++i) {
-        uint32_t id = items[i].id;
-        if (id < kIdDetail0 || id >= kIdDetail0 + D_COUNT) continue;
-        int d = (int)(id - kIdDetail0);
-        if (items[i].type == 6 && items[i].name == kDetail[d].name && items[i].invoker == invoker) {
-          items[i].value = (float)g_detail[d];
-        }
+        MenuItem &it = items[i];
+        if (it.id != id || it.type != 6 || it.name != name || it.invoker != invoker) continue;
+        if (values) { it.values = values; it.count = count; }
+        it.value = value;
       }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
       g_pages[k] = nullptr;
     }
   }
+}
+static void ShowDetailValues() {
+  for (int d = 0; d < D_COUNT; ++d) SetRow(kIdDetail0 + d, kDetail[d].name, (float)g_detail[d]);
+}
+
+// ---- display rows -------------------------------------------------------------------------------
+// Display mode: at once (display.inc). Aspect ratio and resolution: the output size, saved to
+// [Display] Width / Height for the next start (the game creates its display once, at start).
+static const char *const kWinModeKeys[display::M_COUNT] = {"ID_RL_WM_BORDERLESS", "ID_RL_WM_WINDOWED", "ID_RL_WM_FULLSCREEN"};
+static const char *const kAspectKeys[] = {"ID_RL_AR_16:9", "ID_RL_AR_16:10", "ID_RL_AR_21:9", "ID_RL_AR_32:9"};
+static const char *const kRes16x9[] = {"ID_RL_DR_1280x720", "ID_RL_DR_1600x900", "ID_RL_DR_1920x1080",
+                                       "ID_RL_DR_2560x1440", "ID_RL_DR_3840x2160"};
+static const char *const kRes16x10[] = {"ID_RL_DR_1280x800", "ID_RL_DR_1440x900", "ID_RL_DR_1680x1050",
+                                        "ID_RL_DR_1920x1200", "ID_RL_DR_2560x1600"};
+static const char *const kRes21x9[] = {"ID_RL_DR_2560x1080", "ID_RL_DR_3440x1440", "ID_RL_DR_3840x1600", "ID_RL_DR_5120x2160"};
+static const char *const kRes32x9[] = {"ID_RL_DR_3840x1080", "ID_RL_DR_5120x1440"};
+static const struct { const char *const *res; uint32_t count; uint32_t def; } kAspectRes[] = {
+  {kRes16x9, _countof(kRes16x9), 2}, {kRes16x10, _countof(kRes16x10), 3},
+  {kRes21x9, _countof(kRes21x9), 0}, {kRes32x9, _countof(kRes32x9), 0}};
+static const int kAspectCount = (int)_countof(kAspectKeys);
+static_assert(_countof(kAspectKeys) == _countof(kAspectRes), "one resolution list per aspect ratio");
+
+static volatile LONG g_aspect = 0, g_dispRes = 2;   // the chosen output (may differ from the running one)
+static bool g_resNoticeShown = false;
+
+static void ResSize(int aspect, int idx, int *w, int *h) {
+  *w = 1920; *h = 1080;
+  sscanf_s(kAspectRes[aspect].res[idx] + 9, "%dx%d", w, h);
+}
+
+// The list entry of the running output size (else the nearest aspect ratio and width).
+static void PickDisplayRow() {
+  int bestA = 0, bestI = 0;
+  double bestD = 1e9;
+  for (int a = 0; a < kAspectCount; ++a)
+    for (uint32_t i = 0; i < kAspectRes[a].count; ++i) {
+      int w, h;
+      ResSize(a, (int)i, &w, &h);
+      double d = fabs((double)w / h - (double)display::g_w / display::g_h) * 100000.0 + abs(w - display::g_w);
+      if (d < bestD) { bestD = d; bestA = a; bestI = (int)i; }
+    }
+  g_aspect = bestA; g_dispRes = bestI;
+}
+
+static void SaveDisplaySize() {
+  int w, h;
+  ResSize(g_aspect, g_dispRes, &w, &h);
+  if (g_ini[0]) {
+    wchar_t b[16];
+    swprintf_s(b, L"%d", w); WritePrivateProfileStringW(L"Display", L"Width", b, g_ini);
+    swprintf_s(b, L"%d", h); WritePrivateProfileStringW(L"Display", L"Height", b, g_ini);
+  }
+  bool next = w != display::g_w || h != display::g_h;
+  log_line("[gfx] resolution -> %dx%d%s\r\n", w, h, next ? " (next start)" : " (running)");
+  if (next && !g_resNoticeShown) {
+    g_resNoticeShown = true;
+    lang::ShowNotice("ID_RL_DISPLAY_RES", "ID_RL_RES_NOTICE");
+  }
+}
+
+static void OnWinMode(float value, int) {
+  LONG m = ListIndex(value, display::M_COUNT);
+  if (m != display::g_mode) display::SetMode(g_desktopHwnd, m);
+}
+// display.inc, after any mode change (menu row or Alt+Enter)
+static void OnModeChanged(LONG mode) {
+  if (g_ini[0]) WritePrivateProfileStringW(L"Display", L"WindowMode", display::kModeNames[mode], g_ini);
+  SetRow(kIdWinMode, "ID_RL_WINMODE", (float)mode);
+}
+static void OnAspect(float value, int) {
+  LONG a = ListIndex(value, kAspectCount);
+  if (a == g_aspect) return;
+  g_aspect = a;
+  g_dispRes = (LONG)kAspectRes[a].def;
+  SetRow(kIdDisplayRes, "ID_RL_DISPLAY_RES", (float)g_dispRes, kAspectRes[a].res, kAspectRes[a].count);
+  SaveDisplaySize();
+}
+static void OnDisplayRes(float value, int) {
+  LONG i = ListIndex(value, (int)kAspectRes[g_aspect].count);
+  if (i == g_dispRes) return;
+  g_dispRes = i;
+  SaveDisplaySize();
 }
 
 static void OnQuality(float value, int) {
@@ -581,6 +690,16 @@ static void AddRows(void *page) {
   MenuItem it = {};
   it.type = 6;
   it.invoker = invoker;
+
+  it.name = "ID_RL_WINMODE"; it.callback = (void *)&OnWinMode; it.id = kIdWinMode;
+  it.values = kWinModeKeys; it.count = display::M_COUNT; it.value = (float)display::g_mode;
+  add(page, &it);
+  it.name = "ID_RL_ASPECT"; it.callback = (void *)&OnAspect; it.id = kIdAspect;
+  it.values = kAspectKeys; it.count = kAspectCount; it.value = (float)g_aspect;
+  add(page, &it);
+  it.name = "ID_RL_DISPLAY_RES"; it.callback = (void *)&OnDisplayRes; it.id = kIdDisplayRes;
+  it.values = kAspectRes[g_aspect].res; it.count = kAspectRes[g_aspect].count; it.value = (float)g_dispRes;
+  add(page, &it);
 
   it.name = "ID_RL_GFX_QUALITY"; it.callback = (void *)&OnQuality; it.id = kIdQuality;
   it.values = kPresetKeys; it.count = kPresetCount; it.value = (float)g_preset;
@@ -666,6 +785,9 @@ static void CopyAliasList(const uint8_t *node, uint64_t *slots, uint32_t slotCou
 
 static void Install(HMODULE hExe) {
   g_exe = hExe;
+  display::Init();
+  display::g_onModeChanged = &OnModeChanged;
+  PickDisplayRow();
   {
     wchar_t ini[MAX_PATH] = {};
     DWORD n = GetEnvironmentVariableW(L"ONRUSH_INI", ini, MAX_PATH);
@@ -844,6 +966,20 @@ static void Install(HMODULE hExe) {
     if (all)
       for (const Patch &p : kNode) WriteCode(exe + p.rva + p.at, &p.val, p.vlen);
     log_line("[gfx] GPU memory nodes: %s\r\n", all ? "2048 pages each" : "NOT enlarged");
+  }
+  // 6. Output size: exe+0xAA9E0 creates the game's display (its size at +0x2C/+0x30, the swap chain and
+  //    every full-screen target follow it) as 1920x1080 (`mov eax,780h ; mov ecx,438h`, Xbox One) or
+  //    3840x2160 (Xbox One X branch). Both get [Display] Width x Height. The UI keeps its 16:9 canvas,
+  //    fitted and centred; the 3D view fills the output (wider or taller field of view).
+  {
+    uint8_t *one = exe + 0x000AAAC7, *onex = exe + 0x000AAABB;
+    bool okS = memcmp(one, "\xB8\x80\x07\x00\x00\xB9\x38\x04\x00\x00", 10) == 0 &&
+               memcmp(onex, "\xB8\x00\x0F\x00\x00\xB9\x70\x08\x00\x00", 10) == 0;
+    if (okS) {
+      int w = display::g_w, h = display::g_h;
+      okS = WriteCode(one + 1, &w, 4) && WriteCode(one + 6, &h, 4) && WriteCode(onex + 1, &w, 4) && WriteCode(onex + 6, &h, 4);
+    }
+    log_line("[gfx] output size %dx%d%s\r\n", display::g_w, display::g_h, okS ? "" : " NOT set (unexpected code at exe+0xAAABB)");
   }
   bool okC = cfgStub && WriteJmpRel(cfg, cfgStub, 5);
   if (!okC) log_line("[gfx] WARNING: config lookup not hooked; detailed graphics options disabled\r\n");

@@ -934,57 +934,7 @@ ICoreApplicationEra : public IInspectable {
 // Global desktop window
 static HWND g_desktopHwnd = nullptr;
 
-// Alt+Enter: toggle between the windowed style and a borderless window covering the monitor.
-static bool g_isBorderlessFull = false;
-static RECT g_savedWindowRect = {};
-static LONG_PTR g_savedStyle = 0, g_savedExStyle = 0;
-static void ToggleBorderlessFullscreen(HWND hwnd) {
-  if (!g_isBorderlessFull) {
-    GetWindowRect(hwnd, &g_savedWindowRect);
-    g_savedStyle = GetWindowLongPtrW(hwnd, GWL_STYLE);
-    g_savedExStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    MONITORINFO mi = {sizeof(mi)};
-    GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
-    SetWindowLongPtrW(hwnd, GWL_STYLE, (g_savedStyle & ~WS_OVERLAPPEDWINDOW) | WS_POPUP | WS_VISIBLE);
-    SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
-                 mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
-    g_isBorderlessFull = true;
-  } else {
-    SetWindowLongPtrW(hwnd, GWL_STYLE, g_savedStyle);
-    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, g_savedExStyle);
-    SetWindowPos(hwnd, HWND_NOTOPMOST, g_savedWindowRect.left, g_savedWindowRect.top,
-                 g_savedWindowRect.right - g_savedWindowRect.left, g_savedWindowRect.bottom - g_savedWindowRect.top,
-                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
-    g_isBorderlessFull = false;
-  }
-}
-
-// The game opened as a borderless window covering the screen (Borderless / Fullscreen): Alt+Enter must
-// know it is already "full" and where to go back to, a framed window. That window shows the render
-// size (shrunk, same aspect, when it does not fit the work area) centred on the monitor's work area.
-static void InitWindowedRestore(HWND hwnd, int clientW, int clientH) {
-  const DWORD style = WS_OVERLAPPEDWINDOW | WS_VISIBLE, exStyle = WS_EX_APPWINDOW;
-  MONITORINFO mi = {sizeof(mi)};
-  GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
-  const RECT &work = mi.rcWork;
-  RECT fr = {0, 0, 100, 100};
-  AdjustWindowRectEx(&fr, style, FALSE, exStyle);
-  int frameW = (fr.right - fr.left) - 100, frameH = (fr.bottom - fr.top) - 100;
-  int availW = (work.right - work.left) - frameW, availH = (work.bottom - work.top) - frameH;
-  int cw = clientW > 0 ? clientW : 1280, ch = clientH > 0 ? clientH : 720;
-  if (cw > availW || ch > availH) {
-    double s = 0.9 * min((double)availW / cw, (double)availH / ch);
-    cw = (int)(cw * s); ch = (int)(ch * s);
-  }
-  int w = cw + frameW, h = ch + frameH;
-  g_savedWindowRect.left = work.left + ((work.right - work.left) - w) / 2;
-  g_savedWindowRect.top = work.top + ((work.bottom - work.top) - h) / 2;
-  g_savedWindowRect.right = g_savedWindowRect.left + w;
-  g_savedWindowRect.bottom = g_savedWindowRect.top + h;
-  g_savedStyle = style;
-  g_savedExStyle = exStyle;
-  g_isBorderlessFull = true;
-}
+#include "display.inc"
 
 // Called every Present: the window may be owned by a thread that never pumps messages, so
 // Alt+Enter is detected from the keyboard state (only while the game window has focus).
@@ -992,6 +942,7 @@ static void InitWindowedRestore(HWND hwnd, int clientW, int clientH) {
 // so the process ends here with exit code 0 (the launcher treats it as a normal exit).
 static void QuitGameFromWindow(const char *why) {
   log_line("[window] %s -> closing the game\r\n", why);
+  display::RestoreMonitor();
   TerminateProcess(GetCurrentProcess(), 0);
 }
 
@@ -1005,11 +956,9 @@ static void PollAltEnterToggle() {
   if (pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_MENU) & 0x8000) && (GetAsyncKeyState(VK_F4) & 0x8000))
     QuitGameFromWindow("Alt+F4");
   bool down = pid == GetCurrentProcessId() && (GetAsyncKeyState(VK_MENU) & 0x8000) && (GetAsyncKeyState(VK_RETURN) & 0x8000);
-  if (down && !s_wasDown) {
-    ToggleBorderlessFullscreen(g_desktopHwnd);
-    log_line("[window] Alt+Enter -> %s\r\n", g_isBorderlessFull ? "borderless fullscreen" : "windowed");
-  }
+  if (down && !s_wasDown) display::ToggleWindowed(g_desktopHwnd);
   s_wasDown = down;
+  display::Poll(g_desktopHwnd, pid == GetCurrentProcessId());
 }
 
 namespace mouse { static bool OnMessage(HWND, UINT, WPARAM, LPARAM, LRESULT *); static void Update(bool focused); static DWORD Buttons(bool focused); }   // mouse.inc
@@ -1027,6 +976,9 @@ static LRESULT CALLBACK DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wParam,
     if (wParam == VK_RETURN && (lParam & (1 << 29)))  // Alt+Enter: toggled by PollAltEnterToggle()
       return 0;
     return DefWindowProcW(hwnd, msg, wParam, lParam);
+  case WM_SIZING:   // the framed window keeps the output's aspect ratio
+    display::OnSizing(hwnd, wParam, (RECT *)lParam);
+    return TRUE;
   case WM_SYSCHAR:
     if (wParam == VK_RETURN) return 0;  // no "ding" on Alt+Enter
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1067,30 +1019,10 @@ static HWND EnsureDesktopWindow() {
   if (g_desktopHwnd)
     return g_desktopHwnd;
 
-  int width = 1920;
-  int height = 1080;
-  wchar_t envBuf[64] = {};
-  if (GetEnvironmentVariableW(L"ONRUSH_RES_WIDTH", envBuf, 64) > 0) {
-    int val = _wtoi(envBuf);
-    if (val > 0)
-      width = val;
-  }
-  if (GetEnvironmentVariableW(L"ONRUSH_RES_HEIGHT", envBuf, 64) > 0) {
-    int val = _wtoi(envBuf);
-    if (val > 0)
-      height = val;
-  }
-
-  DWORD windowStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
-  DWORD exStyle = WS_EX_APPWINDOW;
-
-  if (GetEnvironmentVariableW(L"ONRUSH_WINDOW_MODE", envBuf, 64) > 0) {
-    if (_wcsicmp(envBuf, L"Borderless") == 0 ||
-        _wcsicmp(envBuf, L"Fullscreen") == 0) {
-      windowStyle = WS_POPUP | WS_VISIBLE;
-      exStyle = WS_EX_APPWINDOW | WS_EX_TOPMOST;
-    }
-  }
+  display::Init();
+  int width = display::g_w, height = display::g_h;
+  DWORD windowStyle = display::kFramedStyle;
+  DWORD exStyle = display::kFramedEx;
 
   WNDCLASSEXW wc = {sizeof(wc)};
   wc.lpfnWndProc = DesktopWindowProc;
@@ -1104,10 +1036,13 @@ static HWND EnsureDesktopWindow() {
   wc.hbrBackground = nullptr;
   RegisterClassExW(&wc);
 
-  int screenW = GetSystemMetrics(SM_CXSCREEN);
-  int screenH = GetSystemMetrics(SM_CYSCREEN);
-  int posX = (screenW > width) ? (screenW - width) / 2 : 0;
-  int posY = (screenH > height) ? (screenH - height) / 2 : 0;
+  // created framed at the default windowed place; display::Place below moves it to the start mode
+  RECT start;
+  {
+    MONITORINFO mi = {sizeof(mi)};
+    GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
+    start = display::DefaultWindowedRect(mi.rcWork);
+  }
 
   if (NoFocusMode()) {
     windowStyle = WS_OVERLAPPEDWINDOW;  // shown below without activation
@@ -1116,7 +1051,7 @@ static HWND EnsureDesktopWindow() {
 
   g_desktopHwnd = CreateWindowExW(
       exStyle, wc.lpszClassName, L"ONRUSH\x2122",
-      windowStyle, posX, posY, width, height, nullptr,
+      windowStyle & ~WS_VISIBLE, start.left, start.top, start.right - start.left, start.bottom - start.top, nullptr,
       nullptr, wc.hInstance, nullptr);
 
   if (NoFocusMode()) {
@@ -1126,15 +1061,16 @@ static HWND EnsureDesktopWindow() {
     EnableWindow(g_desktopHwnd, FALSE);
     log_line("[window] ONRUSH_NO_FOCUS: window opened in the background\r\n");
   } else {
-    if (windowStyle & WS_POPUP) InitWindowedRestore(g_desktopHwnd, width, height);
+    display::CreateBackdrop(g_desktopHwnd);
+    if (display::g_mode != display::M_WINDOWED) display::Place(g_desktopHwnd, display::g_mode);
     ShowWindow(g_desktopHwnd, SW_SHOWNORMAL);
     SetForegroundWindow(g_desktopHwnd);
     SetActiveWindow(g_desktopHwnd);
     SetFocus(g_desktopHwnd);
   }
   UpdateWindow(g_desktopHwnd);
-  log_line("[bridge] Created desktop HWND: %p (%dx%d, style=0x%08lX)\r\n",
-           g_desktopHwnd, width, height, windowStyle);
+  log_line("[bridge] Created desktop HWND: %p (output %dx%d, %ls)\r\n", g_desktopHwnd, width, height,
+           display::kModeNames[display::g_mode]);
   return g_desktopHwnd;
 }
 
@@ -1294,8 +1230,8 @@ public:
       return E_POINTER;
     rect->X = 0;
     rect->Y = 0;
-    rect->Width = 1920;
-    rect->Height = 1080;
+    rect->Width = (float)display::g_w;   // the output size (display.inc)
+    rect->Height = (float)display::g_h;
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE _abi_get_Dispatcher(void **dispatcher) override {
