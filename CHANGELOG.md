@@ -9,7 +9,7 @@
   - **Qualidade gráfica:** de Ultra baixa a Ultra, ou Console (o visual original).
   - **Limite de quadros:** de 30 a 240 FPS, ou sem limite.
   - **V-Sync:** ligado ou desligado.
-  - **Ajustes detalhados:** resolução interna (50% a 200%), sombras, detalhe do cenário, detalhe dos veículos, tesselação, névoa, efeitos de luz e detritos. Em "Auto", cada um segue a qualidade gráfica escolhida. Alguns ajustes só valem a partir da próxima corrida.
+  - **Ajustes detalhados:** resolução interna (50% a 200%), sombras, detalhe do cenário, detalhe dos veículos, tesselação, névoa, efeitos de luz e detritos. Ao escolher uma qualidade gráfica, todos eles mudam para os valores dela, e depois cada um pode ser ajustado à parte. Alguns ajustes só valem a partir da próxima corrida.
 - As escolhas ficam salvas para a próxima vez, e a opção V-Sync do launcher passou a funcionar.
 - Duas câmeras novas na corrida: **capô** e **cockpit** (primeira pessoa). O botão de trocar câmera (RB, ou E no teclado) agora alterna entre distante, próxima, capô e cockpit, e a última escolhida fica salva.
 - Nova página **Configurações > Vozes e texto**: o idioma dos textos muda na hora, sem reiniciar. O idioma das vozes também é escolhido ali e vale a partir da próxima vez que o jogo abrir (um aviso do próprio jogo lembra disso ao trocar).
@@ -22,8 +22,10 @@
 - **Launcher com visual novo:** cores grafite mais limpas nos temas escuro e claro, com um fundo simples nas cores do launcher. A lista de perfis também segue as cores do tema.
 - As opções gráficas do jogo também estão no launcher, em **Configurações > Gráficos**. O que muda num lugar aparece no outro.
 - "Minimizar o launcher ao jogar" agora vem ligado.
+- O launcher agora se chama **RushLauncher.exe**. Quem atualiza pelo próprio launcher não precisa fazer nada: o arquivo antigo é trocado sozinho.
 
 ### Correções
+- Trocar a qualidade gráfica de Console para Ultra com o jogo aberto não fecha mais o jogo.
 - Alt+Enter agora alterna corretamente entre tela cheia e janela.
 - O log do launcher não cobre mais o menu lateral.
 - A lista de resoluções do launcher está em ordem, da menor para a maior.

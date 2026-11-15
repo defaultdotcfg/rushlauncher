@@ -933,7 +933,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         ApplyUiLanguage(hwnd);   // also fills the GRÁFICOS combos from g_config
         PlUpdateVisibility(hwnd);
 
-        // "OnRushLauncher.exe -setup <copy of the game>": set the game up in the launcher folder without asking
+        // "RushLauncher.exe -setup <copy of the game>": set the game up in the launcher folder without asking
         {
             int argc = 0; LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
             for (int i = 1; argv && i + 1 < argc; ++i)
@@ -964,8 +964,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         LogPrintf(L"Pasta do jogo: %ls\r\n\r\n", initialGameDir);
         for (const auto &p : CheckPrerequisites(initialGameDir))
             LogPrintf(L"  [%ls] %ls (%ls)\r\n", p.found ? L" OK " : L"FALTA", p.name, p.file);
-        // "OnRushLauncher.exe -prepshaders": run only the shader/pipeline preparation and exit
-        // "OnRushLauncher.exe -autolaunch": press JOGAR on start (automated tests of the real launcher path)
+        // "RushLauncher.exe -prepshaders": run only the shader/pipeline preparation and exit
+        // "RushLauncher.exe -autolaunch": press JOGAR on start (automated tests of the real launcher path)
         if (wcsstr(GetCommandLineW(), L"-prepshaders") || wcsstr(GetCommandLineW(), L"-autolaunch"))
             PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(ID_BTN_LAUNCH, 0), 0);
         else if (!wcsstr(GetCommandLineW(), L"-noupdatecheck"))
@@ -1158,7 +1158,12 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         if (ProfHandleCommand(hwnd, id, code)) return 0;
         if (id >= ID_GFX_COMBO0 && id < ID_GFX_COMBO0 + GR_COUNT)
         {
-            if (code == CBN_SELCHANGE) { ReadUiIntoConfig(); SaveIni(); }
+            if (code == CBN_SELCHANGE)
+            {
+                ReadUiIntoConfig();
+                if (id == ID_GFX_COMBO0 + GR_PRESET) { GfxDetailsFromPreset(&g_config); GfxFill(true); }   // rows follow the preset
+                SaveIni();
+            }
             return 0;
         }
         if (PhHandleCommand(hwnd, id, code)) return 0;
@@ -1355,6 +1360,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     GetModuleFileNameW(nullptr, g_exeDir, MAX_PATH);
     wchar_t *lastSlash = wcsrchr(g_exeDir, L'\\');
     if (lastSlash) *lastSlash = L'\0';
+    if (HandOverFromLegacyName()) return 0;   // started under the old file name (self_update.inc)
 
     SetDefaultConfig(&g_config);
     wchar_t iniPath[MAX_PATH];

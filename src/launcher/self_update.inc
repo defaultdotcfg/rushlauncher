@@ -22,8 +22,25 @@ struct UpdateJob
     char sha256[65];           // expected, lowercase hex
     bool ok = false;
     wchar_t error[160] = {};
-    wchar_t srcDir[MAX_PATH] = {};  // extracted release folder (has OnRushLauncher.exe)
+    wchar_t srcDir[MAX_PATH] = {};  // extracted release folder (has RushLauncher.exe)
 };
+
+// Before v0.2.0 the launcher was called OnRushLauncher.exe. Launchers of those versions install an update only if
+// the zip has OnRushLauncher.exe and then start that file, so release zips also carry a copy under the old name:
+// started under it, the launcher hands over to RushLauncher.exe next to it, which then deletes the old file.
+static const wchar_t kLauncherExe[] = L"RushLauncher.exe";
+static const wchar_t kLegacyLauncherExe[] = L"OnRushLauncher.exe";
+
+static bool HasLauncherExe(const wchar_t *dir)
+{
+    wchar_t probe[MAX_PATH];
+    for (const wchar_t *n : { kLauncherExe, kLegacyLauncherExe })
+    {
+        swprintf_s(probe, MAX_PATH, L"%ls\\%ls", dir, n);
+        if (GetFileAttributesW(probe) != INVALID_FILE_ATTRIBUTES) return true;
+    }
+    return false;
+}
 
 static bool g_updateDownloading = false;
 static int g_updatePercent = 0;
@@ -152,8 +169,7 @@ static DWORD WINAPI UpdateDownloadThread(LPVOID param)
     }
     {   // the zip has one top folder (any name); accept files at the root too
         wchar_t probe[MAX_PATH], pat[MAX_PATH];
-        swprintf_s(probe, MAX_PATH, L"%ls\\OnRushLauncher.exe", stage);
-        if (GetFileAttributesW(probe) != INVALID_FILE_ATTRIBUTES) wcscpy_s(job->srcDir, MAX_PATH, stage);
+        if (HasLauncherExe(stage)) wcscpy_s(job->srcDir, MAX_PATH, stage);
         swprintf_s(pat, MAX_PATH, L"%ls\\*", stage);
         WIN32_FIND_DATAW fd;
         HANDLE h = job->srcDir[0] ? INVALID_HANDLE_VALUE : FindFirstFileW(pat, &fd);
@@ -162,12 +178,12 @@ static DWORD WINAPI UpdateDownloadThread(LPVOID param)
             do
             {
                 if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
-                swprintf_s(probe, MAX_PATH, L"%ls\\%ls\\OnRushLauncher.exe", stage, fd.cFileName);
-                if (GetFileAttributesW(probe) != INVALID_FILE_ATTRIBUTES) { swprintf_s(job->srcDir, MAX_PATH, L"%ls\\%ls", stage, fd.cFileName); break; }
+                swprintf_s(probe, MAX_PATH, L"%ls\\%ls", stage, fd.cFileName);
+                if (HasLauncherExe(probe)) { wcscpy_s(job->srcDir, MAX_PATH, probe); break; }
             } while (FindNextFileW(h, &fd));
             FindClose(h);
         }
-        if (!job->srcDir[0]) { wcscpy_s(job->error, L"o zip não tem o OnRushLauncher.exe"); goto done; }
+        if (!job->srcDir[0]) { wcscpy_s(job->error, L"o zip não tem o RushLauncher.exe"); goto done; }
     }
     job->ok = true;
 
@@ -232,7 +248,7 @@ static bool UpdateCopyTree(const wchar_t *src, const wchar_t *dst, bool top, std
     do
     {
         if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
-        if (top && UpdateKeepName(fd.cFileName)) continue;
+        if (top && (UpdateKeepName(fd.cFileName) || !_wcsicmp(fd.cFileName, kLegacyLauncherExe))) continue;  // old name: not needed here
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
         wchar_t s[MAX_PATH], d[MAX_PATH];
         swprintf_s(s, MAX_PATH, L"%ls\\%ls", src, fd.cFileName);
@@ -265,21 +281,60 @@ static int RunApplyUpdate()
     if (HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, pid)) { WaitForSingleObject(p, 30000); CloseHandle(p); }
     Sleep(300);
     std::wstring err;
-    wchar_t probe[MAX_PATH];
-    swprintf_s(probe, MAX_PATH, L"%ls\\OnRushLauncher.exe", src);
-    bool ok = GetFileAttributesW(probe) != INVALID_FILE_ATTRIBUTES && UpdateCopyTree(src, dst, true, err);
+    bool ok = HasLauncherExe(src) && UpdateCopyTree(src, dst, true, err);
     if (!ok)
         MessageBoxW(nullptr, (std::wstring(L"Não foi possível concluir a atualização do launcher.\nArquivos não atualizados:") + err +
                               L"\n\nBaixe o zip da versão nova no GitHub e extraia por cima da pasta do launcher.").c_str(),
                     L"RushLauncher", MB_ICONWARNING);
     wchar_t exe[MAX_PATH], cmd[2 * MAX_PATH];
-    swprintf_s(exe, MAX_PATH, L"%ls\\OnRushLauncher.exe", dst);
+    swprintf_s(exe, MAX_PATH, L"%ls\\%ls", dst, kLauncherExe);
+    if (GetFileAttributesW(exe) == INVALID_FILE_ATTRIBUTES) swprintf_s(exe, MAX_PATH, L"%ls\\%ls", dst, kLegacyLauncherExe);
     swprintf_s(cmd, 2 * MAX_PATH, L"\"%ls\" %ls", exe, ok ? L"-updated" : L"");
     STARTUPINFOW si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};
     if (CreateProcessW(exe, cmd, nullptr, nullptr, FALSE, 0, nullptr, dst, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
     LocalFree(argv);
     return ok ? 0 : 1;
+}
+
+// Started as OnRushLauncher.exe (the old name) with RushLauncher.exe next to it: start that one with the same
+// arguments and return true (the caller exits). Started as RushLauncher.exe: delete a leftover OnRushLauncher.exe
+// in the background (it may still be running for a moment while it hands over).
+static DWORD WINAPI LegacyLauncherCleanupThread(LPVOID)
+{
+    wchar_t old[MAX_PATH];
+    swprintf_s(old, MAX_PATH, L"%ls\\%ls", g_exeDir, kLegacyLauncherExe);
+    for (int i = 0; i < 40 && GetFileAttributesW(old) != INVALID_FILE_ATTRIBUTES; ++i)
+    {
+        SetFileAttributesW(old, FILE_ATTRIBUTE_NORMAL);
+        if (DeleteFileW(old)) break;
+        Sleep(500);
+    }
+    return 0;
+}
+
+static bool HandOverFromLegacyName()
+{
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    const wchar_t *name = wcsrchr(self, L'\\');
+    name = name ? name + 1 : self;
+    wchar_t exe[MAX_PATH];
+    swprintf_s(exe, MAX_PATH, L"%ls\\%ls", g_exeDir, kLauncherExe);
+    if (!_wcsicmp(name, kLegacyLauncherExe))
+    {
+        if (GetFileAttributesW(exe) == INVALID_FILE_ATTRIBUTES) return false;   // no new file: keep running as is
+        const wchar_t *args = PathGetArgsW(GetCommandLineW());
+        std::wstring cmd = std::wstring(L"\"") + exe + L"\" " + (args ? args : L"");
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi = {};
+        if (!CreateProcessW(exe, &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, g_exeDir, &si, &pi)) return false;
+        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+        return true;
+    }
+    if (!_wcsicmp(name, kLauncherExe))
+        if (HANDLE t = CreateThread(nullptr, 0, LegacyLauncherCleanupThread, nullptr, 0, nullptr)) CloseHandle(t);
+    return false;
 }
 
 // The new launcher removes the temp folder once the installer copy has exited.

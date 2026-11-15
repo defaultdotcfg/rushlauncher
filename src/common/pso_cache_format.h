@@ -1,5 +1,5 @@
 // Pipeline (PSO) disk cache format, shared by d3d12_x.dll (records + uses the cache in game)
-// and OnRushLauncher.exe (rebuilds it before the game starts, e.g. after a driver update).
+// and RushLauncher.exe (rebuilds it before the game starts, e.g. after a driver update).
 //
 // Files, all in <game>\shaders\pso_cache\:
 //   manifest.bin  "ORPSOMF1" + records { u32 'PSCR', u64 key, u32 size, payload[size] }

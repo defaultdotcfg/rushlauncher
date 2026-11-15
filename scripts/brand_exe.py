@@ -76,7 +76,7 @@ def main():
     print('wrote', DST, '(icon: %s)' % ('yes' if pngs else 'no'))
     if pngs:
         # same icon on the launcher, and the splash art next to it (the launcher shows it)
-        launcher = os.path.join(GAME_DIR, 'OnRushLauncher.exe')
+        launcher = os.path.join(GAME_DIR, 'RushLauncher.exe')
         if os.path.exists(launcher):
             hl = k32.BeginUpdateResourceW(launcher, False)
             imgs = icon_images(pngs)

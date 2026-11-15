@@ -13,7 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 if (-not $BinDir) { $BinDir = if (Test-Path "$root\bin\d3d12_x.dll") { "$root\bin" } else { "$root" } }
-foreach ($b in "d3d12_x.dll", "OnRushLauncher.exe") {
+foreach ($b in "d3d12_x.dll", "RushLauncher.exe") {
     if (-not (Test-Path "$BinDir\$b")) { throw "$b not found in $BinDir. Run scripts\build.ps1 first (or use the release zip)." }
 }
 if (-not (Test-Path $GameRoot)) { throw "GameRoot does not exist: $GameRoot" }
@@ -36,7 +36,7 @@ foreach ($f in "AcpHal.dll", "ACP_kernel.bin", "xg_x.dll", "xaudio2_9.dll", "D3D
     if (Test-Path "$sys32\$f") { Copy-Item "$sys32\$f" $Destination -Force; Write-Host "  system library: $f" }
 }
 # 3. port binaries
-foreach ($f in "kernelx.dll", "combase.dll", "EtwPlus.dll", "MMDevAPI.dll", "d3d12_x.dll", "OnRushLauncher.exe") {
+foreach ($f in "kernelx.dll", "combase.dll", "EtwPlus.dll", "MMDevAPI.dll", "d3d12_x.dll", "RushLauncher.exe") {
     if (Test-Path "$BinDir\$f") { Copy-Item "$BinDir\$f" $Destination -Force; Write-Host "  port: $f" -ForegroundColor Green }
 }
 # 4. large asset folders as junctions (nothing is copied)
@@ -47,4 +47,4 @@ foreach ($j in @(@{ src = "$mount\dat"; dst = "$Destination\dat" }, @{ src = "$G
 $brand = Join-Path $PSScriptRoot "brand_exe.py"
 if ((Test-Path $brand) -and (Get-Command python -ErrorAction SilentlyContinue)) { python -I $brand $Destination }
 else { Copy-Item "$Destination\game_release_xbox.exe" "$Destination\onrush-pc.exe" -Force }
-Write-Host "`nDone. Start $Destination\OnRushLauncher.exe" -ForegroundColor Green
+Write-Host "`nDone. Start $Destination\RushLauncher.exe" -ForegroundColor Green

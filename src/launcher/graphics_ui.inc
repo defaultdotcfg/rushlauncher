@@ -1,7 +1,8 @@
 // "Gráficos" card of the Configurações tab, in the content column: the same options as the rows the bridge adds to
 // the game's Options > GRAPHICS page (src/d3d12_x/gfx_options.inc). They share onrush.ini: [Graphics] Preset and
-// FpsLimit reach the game through the environment, Upscaler and the detail rows (0 = AUTO = the quality preset's
-// value) are read by the bridge from the ini; changes made in the game are read back when it closes.
+// FpsLimit reach the game through the environment, Upscaler and the detail rows (real levels; choosing a quality
+// preset moves every row to that preset's levels) are read by the bridge from the ini; changes made in the game are
+// read back when it closes.
 
 #define ID_GFX_COMBO0     1120   // .. ID_GFX_COMBO0 + GR_COUNT - 1
 
@@ -11,7 +12,6 @@ enum GfxRow { GR_PRESET, GR_FPS, GR_RES, GR_UPSCALER, GR_SHADOWS, GR_FOG, GR_WOR
 struct GfxText { const wchar_t *t[3]; };   // pt, en, es
 struct GfxRowDef { GfxText label; const GfxText *vals; int count; int detail; };   // detail: index in gfxDetail, -1 none
 
-static const GfxText kGfxAuto = { { L"Auto", L"Auto", L"Auto" } };
 static const GfxText kGfxPresetVals[] = {
     { { L"Console (Xbox One)", L"Console (Xbox One)", L"Consola (Xbox One)" } },
     { { L"Ultra baixa", L"Ultra low", L"Ultra baja" } }, { { L"Baixa", L"Low", L"Baja" } },
@@ -23,44 +23,44 @@ static const GfxText kGfxFpsVals[] = {
     { { L"165 FPS", L"165 FPS", L"165 FPS" } }, { { L"240 FPS", L"240 FPS", L"240 FPS" } },
     { { L"Sem limite", L"Unlimited", L"Sin límite" } } };
 static const GfxText kGfxResVals[] = {
-    kGfxAuto, { { L"50%", L"50%", L"50%" } }, { { L"67%", L"67%", L"67%" } }, { { L"75%", L"75%", L"75%" } },
-    { { L"85%", L"85%", L"85%" } }, { { L"100%", L"100%", L"100%" } }, { { L"125%", L"125%", L"125%" } },
+    { { L"50%", L"50%", L"50%" } }, { { L"67%", L"67%", L"67%" } }, { { L"75%", L"75%", L"75%" } },
+    { { L"83%", L"83%", L"83%" } }, { { L"100%", L"100%", L"100%" } }, { { L"125%", L"125%", L"125%" } },
     { { L"150%", L"150%", L"150%" } }, { { L"200%", L"200%", L"200%" } } };
 static const GfxText kGfxUpscalerVals[] = { { { L"TAA", L"TAA", L"TAA" } }, { { L"FSR 2", L"FSR 2", L"FSR 2" } } };
 static const GfxText kGfxShadowVals[] = {
-    kGfxAuto, { { L"Baixa", L"Low", L"Baja" } }, { { L"Média", L"Medium", L"Media" } }, { { L"Alta", L"High", L"Alta" } },
+    { { L"Baixa", L"Low", L"Baja" } }, { { L"Média", L"Medium", L"Media" } }, { { L"Alta", L"High", L"Alta" } },
     { { L"Ultra", L"Ultra", L"Ultra" } } };
 static const GfxText kGfxLodVals[] = {
-    kGfxAuto, { { L"Baixo", L"Low", L"Bajo" } }, { { L"Médio", L"Medium", L"Medio" } }, { { L"Alto", L"High", L"Alto" } },
+    { { L"Baixo", L"Low", L"Bajo" } }, { { L"Médio", L"Medium", L"Medio" } }, { { L"Alto", L"High", L"Alto" } },
     { { L"Ultra", L"Ultra", L"Ultra" } } };
 static const GfxText kGfxTessVals[] = {
-    kGfxAuto, { { L"Desligada", L"Off", L"Desactivada" } }, { { L"Ligada", L"On", L"Activada" } } };
+    { { L"Desligada", L"Off", L"Desactivada" } }, { { L"Ligada", L"On", L"Activada" } } };
 static const GfxText kGfxFogVals[] = {
-    kGfxAuto, { { L"Desligada", L"Off", L"Desactivada" } }, { { L"Baixa", L"Low", L"Baja" } }, { { L"Alta", L"High", L"Alta" } } };
+    { { L"Desligada", L"Off", L"Desactivada" } }, { { L"Média", L"Medium", L"Media" } }, { { L"Alta", L"High", L"Alta" } } };
 static const GfxText kGfxLightVals[] = {
-    kGfxAuto, { { L"Desligados", L"Off", L"Desactivados" } }, { { L"Ligados", L"On", L"Activados" } } };
+    { { L"Desligados", L"Off", L"Desactivados" } }, { { L"Ligados", L"On", L"Activados" } } };
 static const GfxText kGfxDebrisVals[] = {
-    kGfxAuto, { { L"Poucos", L"Few", L"Pocos" } }, { { L"Muitos", L"Many", L"Muchos" } } };
+    { { L"Poucos", L"Few", L"Pocos" } }, { { L"Normal", L"Normal", L"Normal" } }, { { L"Muitos", L"Many", L"Muchos" } } };
 
 // Rows in screen order (two columns); detail indexes follow kGfxDetailKeys.
 static const GfxRowDef kGfxRows[GR_COUNT] = {
     { { { L"Qualidade gráfica", L"Graphics quality", L"Calidad gráfica" } }, kGfxPresetVals, 6, -1 },
     { { { L"Limite de quadros", L"Frame rate limit", L"Límite de FPS" } }, kGfxFpsVals, 8, -1 },
-    { { { L"Resolução interna", L"Render resolution", L"Resolución interna" } }, kGfxResVals, 9, 0 },
+    { { { L"Resolução interna", L"Render resolution", L"Resolución interna" } }, kGfxResVals, 8, 0 },
     { { { L"Upscaler", L"Upscaler", L"Escalado" } }, kGfxUpscalerVals, 2, -1 },
-    { { { L"Sombras", L"Shadows", L"Sombras" } }, kGfxShadowVals, 5, 1 },
-    { { { L"Névoa", L"Fog", L"Niebla" } }, kGfxFogVals, 4, 5 },
-    { { { L"Detalhe do cenário", L"World detail", L"Detalle del escenario" } }, kGfxLodVals, 5, 2 },
-    { { { L"Detalhe dos veículos", L"Vehicle detail", L"Detalle de vehículos" } }, kGfxLodVals, 5, 3 },
-    { { { L"Tesselação", L"Tessellation", L"Teselación" } }, kGfxTessVals, 3, 4 },
-    { { { L"Efeitos de luz", L"Light effects", L"Efectos de luz" } }, kGfxLightVals, 3, 6 },
+    { { { L"Sombras", L"Shadows", L"Sombras" } }, kGfxShadowVals, 4, 1 },
+    { { { L"Névoa", L"Fog", L"Niebla" } }, kGfxFogVals, 3, 5 },
+    { { { L"Detalhe do cenário", L"World detail", L"Detalle del escenario" } }, kGfxLodVals, 4, 2 },
+    { { { L"Detalhe dos veículos", L"Vehicle detail", L"Detalle de vehículos" } }, kGfxLodVals, 4, 3 },
+    { { { L"Tesselação", L"Tessellation", L"Teselación" } }, kGfxTessVals, 2, 4 },
+    { { { L"Efeitos de luz", L"Light effects", L"Efectos de luz" } }, kGfxLightVals, 2, 6 },
     { { { L"Detritos", L"Debris", L"Escombros" } }, kGfxDebrisVals, 3, 7 },
 };
 static const GfxText kGfxTitle = { { L"GRÁFICOS", L"GRAPHICS", L"GRÁFICOS" } };
 static const GfxText kGfxHint = { {
-    L"Auto segue a qualidade gráfica escolhida. As mesmas opções também ficam no jogo, em Opções > Gráficos.",
-    L"Auto follows the chosen graphics quality. The same options are also in the game, under Options > Graphics.",
-    L"Auto sigue la calidad gráfica elegida. Las mismas opciones también están en el juego, en Opciones > Gráficos." } };
+    L"Escolher uma qualidade gráfica ajusta todas as opções para ela. As mesmas opções também ficam no jogo, em Opções > Gráficos.",
+    L"Choosing a graphics quality sets every option to match it. The same options are also in the game, under Options > Graphics.",
+    L"Elegir una calidad gráfica ajusta todas las opciones a ella. Las mismas opciones también están en el juego, en Opciones > Gráficos." } };
 
 static HWND g_hGfxCombo[GR_COUNT] = {};
 

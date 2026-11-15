@@ -14,8 +14,9 @@
 //  * Frame rate limit (30 .. 240, unlimited): time-based limiter in front of Present, independent
 //    of the monitor's refresh rate (the game's FlipRate 2 only meant "every other vblank").
 //  * Detail rows (render resolution, shadows, world/vehicle detail, tessellation, fog, light effects,
-//    debris): AUTO keeps the preset's value, anything else overrides the matching viewquality.cfg
-//    keys at the game's config lookup (exe+0x156FC0), see "detailed settings" below.
+//    debris): real levels; choosing a quality preset moves them all to that preset's levels, and a
+//    row that differs overrides the matching viewquality.cfg keys at the game's config lookup
+//    (exe+0x156FC0), see "detailed settings" below.
 //  * Vertical sync: on = Present waits for vblank; off = tearing allowed (no extra latency).
 // Choices persist in the launcher's onrush.ini (ONRUSH_INI) and come back through the environment.
 
@@ -102,7 +103,6 @@ static const Text kTexts[] = {
   {"ID_RL_OFF", {"OFF", "DESLIGADO", "DÉSACTIVÉE", "DESACTIVADO", "AUS", "DISATTIVATO", "WYŁĄCZONE"}},
   {"ID_RL_ON", {"ON", "LIGADO", "ACTIVÉE", "ACTIVADO", "AN", "ATTIVATO", "WŁĄCZONE"}},
   // detail rows
-  {"ID_RL_AUTO", {"AUTO", "AUTO", "AUTO", "AUTO", "AUTO", "AUTO", "AUTO"}},
   {"ID_RL_RES", {"RENDER RESOLUTION", "RESOLUÇÃO INTERNA", "RÉSOLUTION RENDU", "RESOLUCIÓN",
                  "RENDERAUFLÖSUNG", "RISOLUZIONE", "ROZDZIELCZOŚĆ"}},
   {"ID_RL_SHADOWS", {"SHADOWS", "SOMBRAS", "OMBRES", "SOMBRAS", "SCHATTEN", "OMBRE", "CIENIE"}},
@@ -125,6 +125,7 @@ static const Text kTexts[] = {
   {"ID_RL_M_HIGH", {"HIGH", "ALTO", "ÉLEVÉ", "ALTO", "HOCH", "ALTO", "WYSOKI"}},
   {"ID_RL_FEW", {"FEW", "POUCOS", "PEU", "POCOS", "WENIG", "POCHI", "MAŁO"}},
   {"ID_RL_MANY", {"MANY", "MUITOS", "BEAUCOUP", "MUCHOS", "VIELE", "MOLTI", "DUŻO"}},
+  {"ID_RL_NORMAL", {"NORMAL", "NORMAL", "NORMAL", "NORMAL", "NORMAL", "NORMALE", "NORMALNIE"}},
   {"ID_RL_UPSCALER", {"UPSCALER", "UPSCALER", "MISE À L'ÉCHELLE", "ESCALADO", "UPSCALER", "UPSCALER", "SKALOWANIE"}},
   {"ID_RL_UPS_TAA", {"TAA", "TAA", "TAA", "TAA", "TAA", "TAA", "TAA"}},
   {"ID_RL_UPS_FSR2", {"FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2"}},
@@ -165,10 +166,11 @@ static const Text kTexts[] = {
   {"ID_RL_LANG_PL", {"POLSKI", "POLSKI", "POLSKI", "POLSKI", "POLSKI", "POLSKI", "POLSKI"}},
 };
 // Percentages (same in every language).
-static const char *const kPctKeys[] = {"ID_RL_PCT_50", "ID_RL_PCT_67", "ID_RL_PCT_75", "ID_RL_PCT_85",
+// 83% = the Xbox One console profile (1600x900 at 1080p).
+static const char *const kPctKeys[] = {"ID_RL_PCT_50", "ID_RL_PCT_67", "ID_RL_PCT_75", "ID_RL_PCT_83",
                                        "ID_RL_PCT_100", "ID_RL_PCT_125", "ID_RL_PCT_150", "ID_RL_PCT_200"};
-static const char *const kPctLabels[] = {"50%", "67%", "75%", "85%", "100%", "125%", "150%", "200%"};
-static const float kPctScale[] = {0.5f, 0.6667f, 0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 2.0f};
+static const char *const kPctLabels[] = {"50%", "67%", "75%", "83%", "100%", "125%", "150%", "200%"};
+static const float kPctScale[] = {0.5f, 0.6667f, 0.75f, 0.8333f, 1.0f, 1.25f, 1.5f, 2.0f};
 static const char *const kFpsKeys[] = {"ID_RL_FPS_30", "ID_RL_FPS_60", "ID_RL_FPS_90", "ID_RL_FPS_120",
                                        "ID_RL_FPS_144", "ID_RL_FPS_165", "ID_RL_FPS_240", "ID_RL_FPS_UNLIMITED"};
 static const char *const kFpsLabels[] = {"30 FPS", "60 FPS", "90 FPS", "120 FPS", "144 FPS", "165 FPS", "240 FPS"};
@@ -194,7 +196,7 @@ static const char *HookLocalise(const char *key) {
 // u32 value, ...} or null. Views read their block when they are created ("EventRenderViewConfig/..."
 // = the race view, so race settings take effect at the next race), the "Memory/..." and global keys
 // when a quality profile is (re)applied. The detail rows below override chosen keys on top of the
-// quality preset; "AUTO" leaves the preset's value.
+// quality preset; a row at its preset level leaves the preset's values.
 enum CfgType : uint32_t { CT_INT = 1, CT_FLOAT = 2, CT_BOOL = 3 };
 enum RuleMode : uint8_t { RM_SET, RM_MUL };
 struct Rule { const char *pattern; uint32_t type; RuleMode mode; float f; };  // f: value or factor
@@ -221,21 +223,19 @@ enum Detail { D_RES, D_SHADOWS, D_WORLD, D_VEHICLES, D_TESS, D_FOG, D_LIGHTFX, D
 struct DetailRow {
   const char *name;            // localisation key of the row
   const wchar_t *ini;          // onrush.ini [Graphics] key
-  const char *const *values;   // value keys (index 0 = AUTO)
+  const char *const *values;   // value keys (real levels; the quality preset picks one per row)
   uint32_t count;
 };
-static const char *const kResVals[] = {"ID_RL_AUTO", "ID_RL_PCT_50", "ID_RL_PCT_67", "ID_RL_PCT_75", "ID_RL_PCT_85",
-                                       "ID_RL_PCT_100", "ID_RL_PCT_125", "ID_RL_PCT_150", "ID_RL_PCT_200"};
 // No "off": the race view is not built for running without shadows (the game never does it; forcing
 // Shadows/enabled = false there crashes at exe+0x128CC0).
-static const char *const kShadowVals[] = {"ID_RL_AUTO", "ID_RL_Q_LOW", "ID_RL_Q_MEDIUM", "ID_RL_Q_HIGH", "ID_RL_Q_ULTRA"};
-static const char *const kLodVals[] = {"ID_RL_AUTO", "ID_RL_M_LOW", "ID_RL_M_MEDIUM", "ID_RL_M_HIGH", "ID_RL_Q_ULTRA"};
-static const char *const kTessVals[] = {"ID_RL_AUTO", "ID_RL_OFF_F", "ID_RL_ON_F"};
-static const char *const kOnOffMpVals[] = {"ID_RL_AUTO", "ID_RL_OFF_MP", "ID_RL_ON_MP"};
-static const char *const kFogVals[] = {"ID_RL_AUTO", "ID_RL_OFF_F", "ID_RL_Q_LOW", "ID_RL_Q_HIGH"};
-static const char *const kDebrisVals[] = {"ID_RL_AUTO", "ID_RL_FEW", "ID_RL_MANY"};
+static const char *const kShadowVals[] = {"ID_RL_Q_LOW", "ID_RL_Q_MEDIUM", "ID_RL_Q_HIGH", "ID_RL_Q_ULTRA"};
+static const char *const kLodVals[] = {"ID_RL_M_LOW", "ID_RL_M_MEDIUM", "ID_RL_M_HIGH", "ID_RL_Q_ULTRA"};
+static const char *const kTessVals[] = {"ID_RL_OFF_F", "ID_RL_ON_F"};
+static const char *const kOnOffMpVals[] = {"ID_RL_OFF_MP", "ID_RL_ON_MP"};
+static const char *const kFogVals[] = {"ID_RL_OFF_F", "ID_RL_Q_MEDIUM", "ID_RL_Q_HIGH"};
+static const char *const kDebrisVals[] = {"ID_RL_FEW", "ID_RL_NORMAL", "ID_RL_MANY"};
 static const DetailRow kDetail[D_COUNT] = {
-  {"ID_RL_RES", L"RenderScale", kResVals, _countof(kResVals)},
+  {"ID_RL_RES", L"RenderScale", kPctKeys, _countof(kPctKeys)},
   {"ID_RL_SHADOWS", L"Shadows", kShadowVals, _countof(kShadowVals)},
   {"ID_RL_WORLD", L"WorldDetail", kLodVals, _countof(kLodVals)},
   {"ID_RL_VEHICLES", L"VehicleDetail", kLodVals, _countof(kLodVals)},
@@ -246,6 +246,27 @@ static const DetailRow kDetail[D_COUNT] = {
 };
 static volatile LONG g_detail[D_COUNT] = {};
 
+// The level of every row that matches each quality preset exactly (viewquality.cfg; order Console,
+// UltraLow, Low, Medium, High, Ultra). Choosing a preset moves every row to these levels; a row only
+// overrides the profile when it differs from its preset level.
+//   render scale: Console 0.8333, UltraLow 0.5, Low 0.71 capped at 1280x720 (= 67% at 1080p),
+//                 Medium/High 1.0, Ultra 1.5      LODs: LowQualityLods / DefaultLods / HighQualityLods
+//   tessellation: NoTessellation / DefaultTessellation   shadows, fog, light effects, debris: no preset
+//   changes them (DefaultShadows = MEDIUM, VolumetricFogResolutionScale 0.5 = MEDIUM, on, normal).
+static const uint8_t kPresetLevel[D_COUNT][6] = {
+  {3, 0, 1, 4, 4, 6},  // D_RES (kPctScale index)
+  {1, 1, 1, 1, 1, 1},  // D_SHADOWS
+  {0, 0, 0, 1, 2, 2},  // D_WORLD
+  {0, 0, 0, 1, 2, 2},  // D_VEHICLES
+  {0, 0, 0, 1, 1, 1},  // D_TESS
+  {1, 1, 1, 1, 1, 1},  // D_FOG
+  {1, 1, 1, 1, 1, 1},  // D_LIGHTFX
+  {1, 1, 1, 1, 1, 1},  // D_DEBRIS
+};
+static LONG PresetLevel(int d, LONG p) { return kPresetLevel[d][p >= 0 && p < kPresetCount ? p : 0]; }
+// Row d differs from the current preset (an override rule is needed).
+static bool Custom(int d) { return g_detail[d] != PresetLevel(d, g_preset); }
+
 enum { kMaxRules = 96 };
 static Rule g_rules[kMaxRules];
 static volatile LONG g_ruleCount = 0;
@@ -255,19 +276,22 @@ static void AddRule(Rule *r, LONG &n, const char *pattern, uint32_t type, RuleMo
   if (n < kMaxRules) r[n++] = Rule{pattern, type, mode, f};
 }
 
-// LOD bias (positive = coarser) and lowest LOD index allowed, for LOW / MEDIUM / HIGH / ULTRA.
-static const float kLodBias[] = {0.5f, 0.0f, -0.5f, -1.0f};
+// LOD levels LOW / MEDIUM / HIGH / ULTRA: LOW = LowQualityLods, MEDIUM = DefaultLods, HIGH = HighQualityLods.
+static const float kWorldBias[] = {0.25f, 0.0f, -0.5f, -1.0f};
+static const float kVehBias[] = {0.25f, 0.0f, -0.5f, -1.0f};
+static const float kViewedBias[] = {0.25f, -0.25f, -0.5f, -1.0f};
+static const float kCharBias[] = {0.5f, 0.0f, 0.0f, -0.5f};
 static const float kMinLod[] = {1.0f, 0.0f, 0.0f, 0.0f};
 
 static void BuildRules() {
   Rule r[kMaxRules];
   LONG n = 0;
   LONG v = g_detail[D_RES];
-  if (v > 0) {
+  if (Custom(D_RES)) {
     // Render size = display size x scale, capped by MaxRender*: the cap is raised to exactly what the
     // chosen scale needs at the window's resolution (render targets are sized from it, so a larger
     // cap only wastes GPU memory). The TAA history keeps the preset's size.
-    float s = kPctScale[v - 1];
+    float s = kPctScale[v];
     int w = EnvInt("ONRUSH_RES_WIDTH", 1920), h = EnvInt("ONRUSH_RES_HEIGHT", 1080);
     if (w < 640 || h < 360) { w = 1920; h = 1080; }
     AddRule(r, n, "Memory/DisplayToRenderScale", CT_FLOAT, RM_SET, s);
@@ -275,40 +299,39 @@ static void BuildRules() {
     AddRule(r, n, "Memory/MaxRenderHeight", CT_INT, RM_SET, (float)(((int)(h * s) + 7) & ~7));
   }
   v = g_detail[D_SHADOWS];
-  if (v > 0) {  // LOW / MEDIUM / HIGH / ULTRA: filter taps and cascade reach
+  if (Custom(D_SHADOWS)) {  // LOW / MEDIUM (= DefaultShadows) / HIGH / ULTRA: filter taps and cascade reach
     static const float kLookups[] = {4, 8, 12, 12}, kDist[] = {0.6f, 1.0f, 1.3f, 1.7f};
-    AddRule(r, n, "EventRenderViewConfig/ShadowCascade:*/numLookups", CT_INT, RM_SET, kLookups[v - 1]);
-    AddRule(r, n, "EventRenderViewConfig/ShadowCascade:*/distance", CT_FLOAT, RM_MUL, kDist[v - 1]);
+    AddRule(r, n, "EventRenderViewConfig/ShadowCascade:*/numLookups", CT_INT, RM_SET, kLookups[v]);
+    AddRule(r, n, "EventRenderViewConfig/ShadowCascade:*/distance", CT_FLOAT, RM_MUL, kDist[v]);
   }
   static const char *const kWorldCats[] = {"CategoryLodBias/Default", "*/CategoryLodBias/Default",
                                            "CategoryLodBias/Fodder", "*/CategoryLodBias/Fodder",
                                            "CategoryLodBias/ProceduralPlacement", "*/CategoryLodBias/ProceduralPlacement"};
-  static const char *const kWorldMin[] = {"CategoryMinLod/Fodder", "*/CategoryMinLod/Fodder"};
-  static const char *const kVehCats[] = {"CategoryLodBias/ViewedVehicle", "*/CategoryLodBias/ViewedVehicle",
-                                         "CategoryLodBias/HubViewedVehicle", "*/CategoryLodBias/HubViewedVehicle",
-                                         "CategoryLodBias/PlayerVehicle", "*/CategoryLodBias/PlayerVehicle",
-                                         "CategoryLodBias/AIVehicle", "*/CategoryLodBias/AIVehicle",
-                                         "CategoryLodBias/Character", "*/CategoryLodBias/Character",
-                                         "CategoryLodBias/HubCharacter", "*/CategoryLodBias/HubCharacter"};
+  static const char *const kVehCats[] = {"CategoryLodBias/PlayerVehicle", "*/CategoryLodBias/PlayerVehicle",
+                                         "CategoryLodBias/AIVehicle", "*/CategoryLodBias/AIVehicle"};
+  static const char *const kViewedCats[] = {"CategoryLodBias/ViewedVehicle", "*/CategoryLodBias/ViewedVehicle",
+                                            "CategoryLodBias/HubViewedVehicle", "*/CategoryLodBias/HubViewedVehicle"};
+  static const char *const kCharCats[] = {"CategoryLodBias/Character", "*/CategoryLodBias/Character",
+                                          "CategoryLodBias/HubCharacter", "*/CategoryLodBias/HubCharacter"};
   static const char *const kVehMin[] = {"CategoryMinLod/ViewedVehicle", "*/CategoryMinLod/ViewedVehicle",
                                         "CategoryMinLod/PlayerVehicle", "*/CategoryMinLod/PlayerVehicle",
                                         "CategoryMinLod/AIVehicle", "*/CategoryMinLod/AIVehicle",
                                         "CategoryMinLod/Character", "*/CategoryMinLod/Character"};
   v = g_detail[D_WORLD];
-  if (v > 0) {
-    for (const char *k : kWorldCats) AddRule(r, n, k, CT_FLOAT, RM_SET, kLodBias[v - 1]);
-    for (const char *k : kWorldMin) AddRule(r, n, k, CT_INT, RM_SET, kMinLod[v - 1]);
-  }
+  if (Custom(D_WORLD))
+    for (const char *k : kWorldCats) AddRule(r, n, k, CT_FLOAT, RM_SET, kWorldBias[v]);
   v = g_detail[D_VEHICLES];
-  if (v > 0) {
-    for (const char *k : kVehCats) AddRule(r, n, k, CT_FLOAT, RM_SET, kLodBias[v - 1]);
-    for (const char *k : kVehMin) AddRule(r, n, k, CT_INT, RM_SET, kMinLod[v - 1]);
+  if (Custom(D_VEHICLES)) {
+    for (const char *k : kVehCats) AddRule(r, n, k, CT_FLOAT, RM_SET, kVehBias[v]);
+    for (const char *k : kViewedCats) AddRule(r, n, k, CT_FLOAT, RM_SET, kViewedBias[v]);
+    for (const char *k : kCharCats) AddRule(r, n, k, CT_FLOAT, RM_SET, kCharBias[v]);
+    for (const char *k : kVehMin) AddRule(r, n, k, CT_INT, RM_SET, kMinLod[v]);
   }
   v = g_detail[D_TESS];
-  if (v == 1) {
+  if (Custom(D_TESS) && v == 0) {
     AddRule(r, n, "Tessellation/enabled", CT_BOOL, RM_SET, 0);
     AddRule(r, n, "Tessellation/castShadowsFromTessellatedTerrain", CT_BOOL, RM_SET, 0);
-  } else if (v == 2) {  // viewquality.cfg DefaultTessellation
+  } else if (Custom(D_TESS)) {  // viewquality.cfg DefaultTessellation
     AddRule(r, n, "Tessellation/enabled", CT_BOOL, RM_SET, 1);
     AddRule(r, n, "Tessellation/maxTessellationFactor", CT_FLOAT, RM_SET, 16.0f);
     AddRule(r, n, "Tessellation/deformationScale", CT_FLOAT, RM_SET, 0.25f);
@@ -319,18 +342,20 @@ static void BuildRules() {
     AddRule(r, n, "Tessellation/deformationFarDistance", CT_FLOAT, RM_SET, 250.0f);
     AddRule(r, n, "Tessellation/castShadowsFromTessellatedTerrain", CT_BOOL, RM_SET, 1);
   }
-  v = g_detail[D_FOG];
-  if (v == 1) AddRule(r, n, "EventRenderViewConfig/Atmospherics/enabled", CT_BOOL, RM_SET, 0);
-  else if (v >= 2) AddRule(r, n, "Memory/VolumetricFogResolutionScale", CT_FLOAT, RM_SET, v == 2 ? 0.5f : 1.0f);
+  v = g_detail[D_FOG];  // OFF / MEDIUM (the game's half-resolution volumetric fog) / HIGH (full resolution)
+  if (Custom(D_FOG)) {
+    if (v == 0) AddRule(r, n, "EventRenderViewConfig/Atmospherics/enabled", CT_BOOL, RM_SET, 0);
+    else AddRule(r, n, "Memory/VolumetricFogResolutionScale", CT_FLOAT, RM_SET, v == 1 ? 0.5f : 1.0f);
+  }
   v = g_detail[D_LIGHTFX];
-  if (v > 0) {
-    float on = v == 2 ? 1.0f : 0.0f;
+  if (Custom(D_LIGHTFX)) {
+    float on = v == 1 ? 1.0f : 0.0f;
     AddRule(r, n, "EventRenderViewConfig/Sky/godRays", CT_BOOL, RM_SET, on);
     AddRule(r, n, "EventRenderViewConfig/LensFlare/enabled", CT_BOOL, RM_SET, on);
     AddRule(r, n, "EventRenderViewConfig/LensDust/enabled", CT_BOOL, RM_SET, on);
   }
-  v = g_detail[D_DEBRIS];
-  if (v > 0) AddRule(r, n, "Debris/*", CT_INT, RM_MUL, v == 1 ? 0.5f : 2.0f);
+  v = g_detail[D_DEBRIS];  // FEW / NORMAL / MANY
+  if (Custom(D_DEBRIS)) AddRule(r, n, "Debris/*", CT_INT, RM_MUL, v == 0 ? 0.5f : v == 2 ? 2.0f : 1.0f);
 
   AcquireSRWLockExclusive(&g_ruleLock);
   memcpy(g_rules, r, sizeof(Rule) * n);
@@ -441,14 +466,61 @@ static void ApplyQualityProfile() {
   if (owner) ((PFN_Apply)((uint8_t *)g_exe + 0x003DCD60))(owner, *((uint8_t *)owner + 0x20));
 }
 
+// Detail rows: real levels; choosing a quality preset moves every row to that preset's level
+// (kPresetLevel). Profile-level keys (render scale, tessellation, fog resolution, global LOD) are
+// re-read by re-applying the profile; race-view keys at the next race.
+static void SaveDetail(int d) {
+  if (!g_ini[0]) return;
+  wchar_t b[16];
+  swprintf_s(b, L"%ld", (long)g_detail[d]);
+  WritePrivateProfileStringW(L"Graphics", kDetail[d].ini, b, g_ini);
+  WritePrivateProfileStringW(L"Graphics", L"DetailLevels", L"1", g_ini);
+}
+
+// Option pages our rows were added to (the game builds the options menu more than once; each page's item
+// vector: data at +8, byte size at +0x10, see exe+0x340DB0). The rows read their value (+0x0C) every
+// frame, so when the preset moves the detail rows their values are rewritten in every such page whose
+// items are still ours (same name key and invoker).
+static uint8_t *volatile g_pages[8] = {};
+static volatile LONG g_pageNext = 0;
+static void RememberPage(uint8_t *page) {
+  for (uint8_t *p : g_pages) if (p == page) return;
+  g_pages[(InterlockedIncrement(&g_pageNext) - 1) & 7] = page;
+}
+static void ShowDetailValues() {
+  void *invoker = (uint8_t *)g_exe + 0x0035E960;
+  for (int k = 0; k < 8; ++k) {
+    uint8_t *page = g_pages[k];
+    if (!page) continue;
+    __try {
+      MenuItem *items = *(MenuItem **)(page + 8);
+      size_t bytes = *(size_t *)(page + 0x10), n = bytes / sizeof(MenuItem);
+      if (!items || n > 256 || n * sizeof(MenuItem) != bytes) { g_pages[k] = nullptr; continue; }
+      for (size_t i = 0; i < n; ++i) {
+        uint32_t id = items[i].id;
+        if (id < kIdDetail0 || id >= kIdDetail0 + D_COUNT) continue;
+        int d = (int)(id - kIdDetail0);
+        if (items[i].type == 6 && items[i].name == kDetail[d].name && items[i].invoker == invoker) {
+          items[i].value = (float)g_detail[d];
+        }
+      }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+      g_pages[k] = nullptr;
+    }
+  }
+}
+
 static void OnQuality(float value, int) {
   LONG p = ListIndex(value, kPresetCount);
   if (p == g_preset) return;
   g_preset = p;
+  for (int d = 0; d < D_COUNT; ++d) { g_detail[d] = PresetLevel(d, p); SaveDetail(d); }
+  BuildRules();
+  ShowDetailValues();
   UpdateProfileNames();
   ApplyQualityProfile();
   SaveIni();
-  log_line("[gfx] graphics quality -> %s\r\n", g_qcName);
+  log_line("[gfx] graphics quality -> %s (detail rows moved to its levels)\r\n", g_qcName);
 }
 static void OnFps(float value, int) {
   g_fpsIdx = ListIndex(value, kFpsCount);
@@ -467,14 +539,6 @@ static void OnVsync(float value, int) {
   log_line("[gfx] vertical sync -> %ld\r\n", (long)g_vsync);
 }
 
-// Detail rows: index 0 = AUTO (the preset's value). Profile-level keys (render scale, tessellation,
-// fog resolution, global LOD) are re-read by re-applying the profile; race-view keys at the next race.
-static void SaveDetail(int d) {
-  if (!g_ini[0]) return;
-  wchar_t b[16];
-  swprintf_s(b, L"%ld", (long)g_detail[d]);
-  WritePrivateProfileStringW(L"Graphics", kDetail[d].ini, b, g_ini);
-}
 static void OnDetail(int d, float value) {
   LONG v = ListIndex(value, (int)kDetail[d].count);
   if (v == g_detail[d]) return;
@@ -484,6 +548,25 @@ static void OnDetail(int d, float value) {
   SaveDetail(d);
   log_line("[gfx] %s -> %s\r\n", kDetail[d].name, kDetail[d].values[v]);
 }
+// Test hook (no menu needed): ONRUSH_GFX_SWITCH="40:5,70:0" picks quality preset 5 at 40 s and 0 at 70 s after
+// the first gamepad poll, through the same callback as the menu row (game thread).
+static void DiagTick() {
+  static int s_n = -1; static double s_t[8]; static int s_v[8]; static ULONGLONG s_t0 = 0;
+  if (s_n < 0) {
+    s_n = 0; s_t0 = GetTickCount64();
+    char b[128] = {};
+    if (GetEnvironmentVariableA("ONRUSH_GFX_SWITCH", b, sizeof(b)) > 0) {
+      char *ctx = nullptr;
+      for (char *tok = strtok_s(b, ",", &ctx); tok && s_n < 8; tok = strtok_s(nullptr, ",", &ctx)) {
+        char *c = strchr(tok, ':');
+        if (c) { s_t[s_n] = atof(tok); s_v[s_n] = atoi(c + 1); ++s_n; }
+      }
+    }
+  }
+  double now = (GetTickCount64() - s_t0) / 1000.0;
+  for (int i = 0; i < s_n; ++i)
+    if (s_t[i] >= 0 && now >= s_t[i]) { s_t[i] = -1; log_line("[gfx] test switch -> preset %d\r\n", s_v[i]); OnQuality((float)s_v[i], 0); }
+}
 template <int D> static void OnDetailRow(float value, int) { OnDetail(D, value); }
 static void *const kDetailCallbacks[D_COUNT] = {
   (void *)&OnDetailRow<0>, (void *)&OnDetailRow<1>, (void *)&OnDetailRow<2>, (void *)&OnDetailRow<3>,
@@ -491,6 +574,7 @@ static void *const kDetailCallbacks[D_COUNT] = {
 static_assert(D_COUNT == 8, "one callback per detail row");
 
 static void AddRows(void *page) {
+  RememberPage((uint8_t *)page);
   typedef void (*PFN_AddItem)(void *page, const MenuItem *item);
   PFN_AddItem add = (PFN_AddItem)((uint8_t *)g_exe + 0x00340DB0);
   void *invoker = (uint8_t *)g_exe + 0x0035E960;
@@ -560,6 +644,26 @@ static bool WriteJmpRel(uint8_t *site, const uint8_t *to, size_t patchLen) {
   return WriteCode(site, b, patchLen);
 }
 
+// GPU memory block node layout after step 5a of Install.
+static const uint32_t kNodeStride = 0x55C0;       // was 0xAB8
+static const uint32_t kNodeMaxPages = 2048;       // page pointers at +0xA0 (was 256)
+static const uint32_t kNodePageIds = 0x40A0;      // u16 page ids (was +0x8A0)
+static const uint32_t kNodeListCount = 0x50A0;    // u32 list count (was +0xAA0)
+static const uint32_t kNodeList = 0x50A8;         // list entries (was +0xAA8)
+
+// Bounded copy of a texture's memory-alias list (see Install, step 5).
+static void CopyAliasList(const uint8_t *node, uint64_t *slots, uint32_t slotCount) {
+  uint32_t n = *(const uint32_t *)(node + kNodeListCount);
+  if (n > slotCount) {
+    static volatile LONG s_logged = 0;
+    if (InterlockedIncrement(&s_logged) <= 8)
+      log_line("[gfx] texture alias list %u > %u slots: extra entries dropped\r\n", n, slotCount);
+    n = slotCount;
+  }
+  const uint64_t *src = (const uint64_t *)(node + kNodeList);
+  for (uint32_t i = 0; i < n; ++i) slots[i] = src[i];
+}
+
 static void Install(HMODULE hExe) {
   g_exe = hExe;
   {
@@ -580,11 +684,18 @@ static void Install(HMODULE hExe) {
     if (!GetEnvironmentVariableW(L"ONRUSH_UPSCALER", u, 16) && g_ini[0]) GetPrivateProfileStringW(L"Graphics", L"Upscaler", L"TAA", u, 16, g_ini);
     g_upscaler = _wcsicmp(u, L"FSR2") == 0 ? 1 : 0;
   }
-  if (g_ini[0])
+  // Detail rows: [Graphics] DetailLevels=1 = level indexes; older inis had 0 = AUTO (-> the preset's
+  // level) and every level one higher (debris: 1 few, 2 many). Missing keys take the preset's level.
+  {
+    bool levels = g_ini[0] && GetPrivateProfileIntW(L"Graphics", L"DetailLevels", 0, g_ini) >= 1;
     for (int d = 0; d < D_COUNT; ++d) {
-      UINT v = GetPrivateProfileIntW(L"Graphics", kDetail[d].ini, 0, g_ini);
-      g_detail[d] = v < kDetail[d].count ? (LONG)v : 0;
+      int v = g_ini[0] ? (int)GetPrivateProfileIntW(L"Graphics", kDetail[d].ini, -1, g_ini) : -1;
+      if (!levels) v = v >= 1 ? ((d == D_DEBRIS && v == 2) ? 2 : v - 1) : -1;
+      g_detail[d] = v >= 0 && v < (int)kDetail[d].count ? (LONG)v : PresetLevel(d, g_preset);
     }
+    if (g_ini[0] && !levels)
+      for (int d = 0; d < D_COUNT; ++d) SaveDetail(d);
+  }
   BuildRules();
 
   uint8_t *exe = (uint8_t *)hExe;
@@ -649,7 +760,76 @@ static void Install(HMODULE hExe) {
     cfgStub = q;
     q = EmitJmpAbs(q, (void *)&HookCfgGet);
   }
+  // 5. Texture memory aliasing list (exe+0xB5B70, called from the texture create path exe+0xB3830): the
+  //    list of resources sharing memory with the new texture ([node+0xAA0] count, entries at +0xAA8) is
+  //    copied into the texture's own slots, sized by the caller (2) and zero-filled with that count, but
+  //    the copy loop at exe+0xB5C62 is not bounded by it. A profile switched in game (e.g. Console ->
+  //    Ultra: bigger shadow maps in a heap already in use) gives longer lists and the copy ran over the
+  //    texture object (crash at exe+0xB5C78 or later). The loop now stops at the caller's size.
+  uint8_t *ali = exe + 0x000B5C62;
+  static const uint8_t kAliHead[] = {0x48, 0x8B, 0x7E, 0x08, 0x33, 0xD2, 0x39, 0x97, 0xA0, 0x0A, 0x00, 0x00};
+  uint8_t *aliStub = nullptr;
+  if (memcmp(ali, kAliHead, sizeof(kAliHead)) == 0 && memcmp(exe + 0x000B5C86, "\x48\x8B\x74\x24\x48", 5) == 0) {
+    aliStub = q;
+    *q++ = 0x48; *q++ = 0x8B; *q++ = 0x4E; *q++ = 0x08;          // mov rcx, [rsi+8]   (graph node)
+    *q++ = 0x48; *q++ = 0x89; *q++ = 0xDA;                        // mov rdx, rbx       (texture slots)
+    *q++ = 0x44; *q++ = 0x8B; *q++ = 0x44; *q++ = 0x24; *q++ = 0x68;  // mov r8d, [rsp+68h] (slot count)
+    *q++ = 0x48; *q++ = 0x83; *q++ = 0xEC; *q++ = 0x20;          // sub rsp, 20h (rsp is 16-aligned here)
+    *q++ = 0x48; *q++ = 0xB8; { void *f = (void *)&CopyAliasList; memcpy(q, &f, 8); q += 8; }
+    *q++ = 0xFF; *q++ = 0xD0;                                     // call rax
+    *q++ = 0x48; *q++ = 0x83; *q++ = 0xC4; *q++ = 0x20;          // add rsp, 20h
+    q = EmitJmpAbs(q, exe + 0x000B5C86);
+  }
   FlushInstructionCache(GetCurrentProcess(), code, (size_t)(q - code));
+  bool okA = aliStub && WriteJmpRel(ali, aliStub, 5);
+  if (!okA) log_line("[gfx] WARNING: texture alias copy not bounded (unexpected code at exe+0xB5C62)\r\n");
+  // 5a. GPU memory block nodes (pool of 48 nodes of 0xAB8 bytes, exe+0xA9450 from 0xAABF3): page
+  //     pointers at +0xA0 and their u16 ids at +0x8A0 (room for 256 pages of 64 KB = 16 MB), then a
+  //     list at +0xAA8 ([+0xAA0] count, room for 2). Nothing bounds them: a render target over 16 MB
+  //     (Ultra applied in game: 2880x1620 and up) wrote its page pointers over the ids, the count and
+  //     the next node (crashes at exe+0xB5C78 / 0xC122B, or later). The node grows to 0x55C0 bytes and
+  //     its fields move: 2048 pages (128 MB), ids at +0x40A0, list count +0x50A0, list +0x50A8 (163).
+  //     Patched: pool size and node address (imul), node index (x * magic >> (64 + 10): 8x stride ->
+  //     shift 13), node delete size, the two memsets of pages+ids, every field displacement. The alias
+  //     copy loop at exe+0xB5C68..0xB5C7E is replaced by the stub above, so it is only patched with it.
+  if (okA) {
+    struct Patch { uint32_t rva; uint8_t len; uint8_t expect[8]; uint8_t at; uint32_t val; uint8_t vlen; };
+    static const Patch kNode[] = {
+      {0x000A949F, 7, {0x48, 0x69, 0xD5, 0xB8, 0x0A, 0x00, 0x00}, 3, kNodeStride, 4},        // imul rdx,rbp,size
+      {0x000AE2CF, 7, {0x48, 0x69, 0xF9, 0xB8, 0x0A, 0x00, 0x00}, 3, kNodeStride, 4},        // imul rdi,rcx,size
+      {0x000ADCA0, 5, {0xBA, 0xB8, 0x0A, 0x00, 0x00}, 1, kNodeStride, 4},                    // mov edx,size
+      {0x000B3EED, 4, {0x48, 0xC1, 0xFE, 0x0A}, 3, 0x0D, 1},                                 // sar rsi,10
+      {0x000B6568, 4, {0x48, 0xC1, 0xFD, 0x0A}, 3, 0x0D, 1},                                 // sar rbp,10
+      {0x000AE2F7, 6, {0x41, 0xB8, 0x00, 0x0A, 0x00, 0x00}, 2, kNodeListCount - 0xA0, 4},    // memset pages+ids
+      {0x000C1297, 6, {0x41, 0xB8, 0x00, 0x0A, 0x00, 0x00}, 2, kNodeListCount - 0xA0, 4},
+      {0x000BF46B, 7, {0x48, 0x81, 0xC2, 0xA0, 0x08, 0x00, 0x00}, 3, kNodePageIds, 4},       // page ids
+      {0x000BF478, 8, {0x48, 0x8D, 0x8C, 0x46, 0xA0, 0x08, 0x00, 0x00}, 4, kNodePageIds, 4},
+      {0x000BF50D, 8, {0x0F, 0xB7, 0x84, 0x5E, 0xA0, 0x08, 0x00, 0x00}, 4, kNodePageIds, 4},
+      {0x000C118B, 8, {0x66, 0x89, 0x8C, 0x43, 0xA0, 0x08, 0x00, 0x00}, 4, kNodePageIds, 4},
+      {0x000C1198, 8, {0x0F, 0xB7, 0x8C, 0x43, 0xA0, 0x08, 0x00, 0x00}, 4, kNodePageIds, 4},
+      {0x000C1223, 8, {0x0F, 0xB7, 0x84, 0x7B, 0xA0, 0x08, 0x00, 0x00}, 4, kNodePageIds, 4},
+      {0x000ADC95, 6, {0x89, 0x81, 0xA0, 0x0A, 0x00, 0x00}, 2, kNodeListCount, 4},           // list count
+      {0x000AE306, 7, {0x44, 0x89, 0xAF, 0xA0, 0x0A, 0x00, 0x00}, 3, kNodeListCount, 4},
+      {0x000AE360, 6, {0x8B, 0x87, 0xA0, 0x0A, 0x00, 0x00}, 2, kNodeListCount, 4},
+      {0x000AE37E, 6, {0xFF, 0x87, 0xA0, 0x0A, 0x00, 0x00}, 2, kNodeListCount, 4},
+      {0x000AE3DD, 6, {0x8B, 0x81, 0xA0, 0x0A, 0x00, 0x00}, 2, kNodeListCount, 4},
+      {0x000AE3F7, 6, {0xFF, 0x81, 0xA0, 0x0A, 0x00, 0x00}, 2, kNodeListCount, 4},
+      {0x000BF3A9, 6, {0x8B, 0x86, 0xA0, 0x0A, 0x00, 0x00}, 2, kNodeListCount, 4},
+      {0x000BF5C4, 7, {0x48, 0x8D, 0x93, 0xA0, 0x0A, 0x00, 0x00}, 3, kNodeListCount, 4},
+      {0x000C11CA, 7, {0x83, 0xBA, 0xA0, 0x0A, 0x00, 0x00, 0x00}, 2, kNodeListCount, 4},
+      {0x000AE366, 8, {0x48, 0x8D, 0x94, 0xC7, 0xA8, 0x0A, 0x00, 0x00}, 4, kNodeList, 4},    // list entries
+      {0x000AE3E3, 8, {0x48, 0x8D, 0x94, 0xC1, 0xA8, 0x0A, 0x00, 0x00}, 4, kNodeList, 4},
+      {0x000BF39B, 7, {0x4C, 0x8D, 0xB6, 0xA8, 0x0A, 0x00, 0x00}, 3, kNodeList, 4},
+      {0x000BF3B2, 8, {0x48, 0x8D, 0x8C, 0xC6, 0xA8, 0x0A, 0x00, 0x00}, 4, kNodeList, 4},
+    };
+    static_assert(kNodePageIds == 0xA0 + kNodeMaxPages * 8 && kNodeListCount == kNodePageIds + kNodeMaxPages * 2, "node layout");
+    bool all = true;
+    for (const Patch &p : kNode)
+      if (memcmp(exe + p.rva, p.expect, p.len) != 0) { all = false; log_line("[gfx] node patch: unexpected code at exe+0x%X\r\n", p.rva); }
+    if (all)
+      for (const Patch &p : kNode) WriteCode(exe + p.rva + p.at, &p.val, p.vlen);
+    log_line("[gfx] GPU memory nodes: %s\r\n", all ? "2048 pages each" : "NOT enlarged");
+  }
   bool okC = cfgStub && WriteJmpRel(cfg, cfgStub, 5);
   if (!okC) log_line("[gfx] WARNING: config lookup not hooked; detailed graphics options disabled\r\n");
 

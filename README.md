@@ -66,13 +66,13 @@ O que mudou em cada versão está no [CHANGELOG](CHANGELOG.md).
 ## Início rápido
 
 1. Extraia o zip nem qualquer pasta.
-2. Abra o `OnRushLauncher.exe` e escolha a pasta da sua cópia do jogo (o pacote extraído, com `Mount\` e `EmbeddedXvd\`).
+2. Abra o `RushLauncher.exe` e escolha a pasta da sua cópia do jogo (o pacote extraído, com `Mount\` e `EmbeddedXvd\`).
 3. Se a cópia não estiver na versão final, o launcher pede a pasta do patch 1.80.100.100 e aplica as diferenças. Os pacotes novos são **movidos** da pasta do patch para a cópia: no mesmo disco, isso é instantâneo e não ocupa espaço extra.
 4. O launcher prepara o jogo na própria pasta: copia o executável e os arquivos pequenos, liga `dat\` e `EmbeddedXvd\` à sua cópia e cria o `onrush-pc.exe`. A sua cópia não é alterada.
 5. Aperte **JOGAR**. Na primeira vez aparece **Preparando shaders**: o launcher lê os shaders dos pacotes do jogo, traduz e compila tudo, e só então abre o jogo. Leva alguns minutos (cerca de 3 minutos numa CPU de 8 núcleos e 16 threads, mais a leitura dos pacotes) e acontece uma vez só. Ela só se repete se os pacotes do jogo mudarem ou se uma versão nova do tradutor precisar.
 6. O botão **Pular** abre o jogo na hora. O que faltou é feito no próximo JOGAR.
 
-Pela linha de comando, `OnRushLauncher.exe -setup "D:\caminho\do\pacote"` prepara o jogo sem passar pela interface.
+Pela linha de comando, `RushLauncher.exe -setup "D:\caminho\do\pacote"` prepara o jogo sem passar pela interface.
 
 ### Como atualizar
 
@@ -196,7 +196,7 @@ Sem datas: as versões saem quando estiverem prontas.
 
 | Pasta | Conteúdo |
 |---|---|
-| `src/launcher` | `OnRushLauncher.exe`: prepara o jogo, aplica o patch, extrai e traduz os shaders, perfis, fotos, configurações, Discord e atualização automática |
+| `src/launcher` | `RushLauncher.exe`: prepara o jogo, aplica o patch, extrai e traduz os shaders, perfis, fotos, configurações, Discord e atualização automática |
 | `src/d3d12_x` | Ponte D3D12.X (Xbox) → D3D12 de PC: PSOs, descritores, tradução de shaders, ESRAM, modo foto, música |
 | `src/kernelx`, `src/combase`, `src/EtwPlus`, `src/MMDevAPI` | Substitutos das bibliotecas do sistema do console |
 | `scripts/translator` | Tradutor GCN → HLSL (`gcn2hlsl.py`), bypass de tesselação e compilação com o DXC; `translate_all.py` é o ponto de entrada |

@@ -4246,6 +4246,7 @@ static const DWORD PAD_MENU = 0x4, PAD_VIEW = 0x8, PAD_A = 0x10, PAD_B = 0x20,
 //   ONRUSH_PRESS_SCRIPT="A@95,A@115,D@125"  -> button held 300 ms at N seconds after the first query.
 //   Buttons: A B X Y, U D L R (d-pad), M (Menu), V (View).
 // Used by the gamepad poll and by the title-screen check (IsAdvanceInputHeld).
+namespace gfxopt { static void DiagTick(); }
 static DWORD ScriptedButtons() {
   struct ScriptPress { char b; double t; };
   static ScriptPress s_sp[32]; static volatile LONG s_init = 0; static int s_spN = 0; static ULONGLONG s_t0 = 0;
@@ -4460,6 +4461,7 @@ static void PollInput(RawGamepadReading *pReading) {
   //   ONRUSH_PRESS_SCRIPT="A@95,A@115,D@125"  -> button held 300 ms at N seconds after the first poll.
   //   Buttons: A B X Y, U D L R (d-pad), M (Menu), V (View).
   pReading->Buttons |= ScriptedButtons();
+  gfxopt::DiagTick();  // ONRUSH_GFX_SWITCH test hook (gfx_options.inc)
 
   // Debug-only autodrive (crash repro without a human driver): ONRUSH_AUTODRIVE=<sec>
   // From <sec> seconds after the first poll: right trigger held, gentle steering wave,

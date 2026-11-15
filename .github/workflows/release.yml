@@ -50,7 +50,10 @@ jobs:
         run: |
           $pkg = "rushlauncher-${{ github.ref_name }}"
           New-Item -ItemType Directory -Force "$pkg/scripts/translator" | Out-Null
-          Copy-Item bin/OnRushLauncher.exe, bin/kernelx.dll, bin/combase.dll, bin/EtwPlus.dll, bin/MMDevAPI.dll, bin/d3d12_x.dll $pkg
+          Copy-Item bin/RushLauncher.exe, bin/kernelx.dll, bin/combase.dll, bin/EtwPlus.dll, bin/MMDevAPI.dll, bin/d3d12_x.dll $pkg
+          # launchers before v0.2.0 (OnRushLauncher.exe) only install an update that has their file name; the copy hands
+          # over to RushLauncher.exe and is deleted by it (src/launcher/self_update.inc)
+          Copy-Item bin/RushLauncher.exe "$pkg/OnRushLauncher.exe"
           Copy-Item bin/translator "$pkg/translator" -Recurse
           Copy-Item scripts/stage.ps1, scripts/brand_exe.py "$pkg/scripts"
           Copy-Item scripts/translator/* "$pkg/scripts/translator"

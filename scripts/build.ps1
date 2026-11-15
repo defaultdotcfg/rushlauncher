@@ -102,16 +102,16 @@ try {
         "$d3d12x\onrush_d3d12_x.cpp", "$d3d12x\xbox_sampler_translator.cpp", "/link", "kernelx.lib",
         "$fsr2\bin\ffx_fsr2_api\ffx_fsr2_api_x64.lib", "$fsr2\bin\ffx_fsr2_api\ffx_fsr2_api_dx12_x64.lib")
 
-    # 6. OnRushLauncher.exe
+    # 6. RushLauncher.exe
     # /utf-8: the source is UTF-8 (accents); /MANIFEST:EMBED: Common Controls v6 dependency
     # launcher.rc: the executable icon (app.ico, resource id 1; also the window icon)
     Push-Location $launcher
-    & rc.exe /nologo /fo "$outDir\OnRushLauncher.res" launcher.rc
+    & rc.exe /nologo /fo "$outDir\RushLauncher.res" launcher.rc
     $rcExit = $LASTEXITCODE
     Pop-Location
     if ($rcExit) { throw "Resource compilation failed with exit code $rcExit" }
-    Invoke-Cl @("/O2", "/std:c++20", "/EHsc", "/utf-8", "/FeOnRushLauncher.exe",
-        "$launcher\OnRushLauncher.cpp", "/link", "/SUBSYSTEM:WINDOWS", "/MANIFEST:EMBED", "$outDir\OnRushLauncher.res")
+    Invoke-Cl @("/O2", "/std:c++20", "/EHsc", "/utf-8", "/FeRushLauncher.exe",
+        "$launcher\OnRushLauncher.cpp", "/link", "/SUBSYSTEM:WINDOWS", "/MANIFEST:EMBED", "$outDir\RushLauncher.res")
 
     Write-Host "`nAll components built successfully to: $outDir" -ForegroundColor Green
 }

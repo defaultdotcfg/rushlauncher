@@ -109,7 +109,7 @@ struct LauncherConfig
     int gfxPreset;          // in-game "Graphics quality": 0 console, 1..5 PC ultra low .. ultra
     int fpsLimit;           // in-game "Frame rate limit" (fps, 0 = unlimited)
     int upscaler;           // in-game "Upscaler": 0 TAA, 1 FSR 2
-    int gfxDetail[8];       // in-game detail rows (bridge gfx_options.inc kDetail order), 0 = AUTO (the preset's value)
+    int gfxDetail[8];       // in-game detail rows (bridge gfx_options.inc kDetail order): level index, moved by the preset
     wchar_t gamePath[MAX_PATH];
     wchar_t savePath[MAX_PATH];
     int diagnostics;
@@ -166,6 +166,20 @@ static HANDLE g_hWorkerThread = nullptr;
 // INI Config Management
 // ============================================================================
 
+// onrush.ini [Graphics] keys of the in-game detail rows (same order and levels as the bridge's gfx_options.inc)
+static const wchar_t *const kGfxDetailKeys[8] = { L"RenderScale", L"Shadows", L"WorldDetail", L"VehicleDetail",
+                                                  L"Tessellation", L"Fog", L"LightEffects", L"Debris" };
+static const int kGfxDetailCount[8] = { 8, 4, 4, 4, 2, 3, 2, 3 };
+// Level of each row that matches each quality preset (bridge kPresetLevel; Console, Ultra low .. Ultra).
+static const int kGfxPresetLevel[8][6] = {
+    { 3, 0, 1, 4, 4, 6 }, { 1, 1, 1, 1, 1, 1 }, { 0, 0, 0, 1, 2, 2 }, { 0, 0, 0, 1, 2, 2 },
+    { 0, 0, 0, 1, 1, 1 }, { 1, 1, 1, 1, 1, 1 }, { 1, 1, 1, 1, 1, 1 }, { 1, 1, 1, 1, 1, 1 } };
+static int GfxPresetLevel(int d, int preset) { return kGfxPresetLevel[d][preset >= 0 && preset < 6 ? preset : 0]; }
+static void GfxDetailsFromPreset(LauncherConfig *cfg)
+{
+    for (int d = 0; d < 8; ++d) cfg->gfxDetail[d] = GfxPresetLevel(d, cfg->gfxPreset);
+}
+
 static void SetDefaultConfig(LauncherConfig *cfg)
 {
     cfg->width = 1920;
@@ -175,7 +189,7 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->gfxPreset = 0;
     cfg->fpsLimit = 60;
     cfg->upscaler = 0;
-    for (int &d : cfg->gfxDetail) d = 0;
+    GfxDetailsFromPreset(cfg);
     cfg->gamePath[0] = L'\0';
     wcscpy_s(cfg->savePath, MAX_PATH, L".\\save");
     cfg->diagnostics = 1;
@@ -196,21 +210,21 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     wcscpy_s(cfg->theme, 8, L"dark");
 }
 
-// onrush.ini [Graphics] keys of the in-game detail rows (same order and values as the bridge's gfx_options.inc)
-static const wchar_t *const kGfxDetailKeys[8] = { L"RenderScale", L"Shadows", L"WorldDetail", L"VehicleDetail",
-                                                  L"Tessellation", L"Fog", L"LightEffects", L"Debris" };
-static const int kGfxDetailCount[8] = { 9, 5, 5, 5, 3, 4, 3, 3 };
-
 // Upscaler and detail rows: also written by the game's GRAPHICS page, so read again when the game closes.
+// [Graphics] DetailLevels=1 marks the current format (level indexes); older inis had 0 = AUTO and the
+// levels shifted by one (debris: 1 few, 2 many).
 static void LoadGfxDetails(const wchar_t *iniPath, LauncherConfig *cfg)
 {
     wchar_t u[16] = {};
     GetPrivateProfileStringW(L"Graphics", L"Upscaler", cfg->upscaler ? L"FSR2" : L"TAA", u, 16, iniPath);
     cfg->upscaler = _wcsicmp(u, L"FSR2") == 0 ? 1 : 0;
+    bool levels = GetPrivateProfileIntW(L"Graphics", L"DetailLevels", 0, iniPath) >= 1;
     for (int d = 0; d < 8; ++d)
     {
-        UINT v = GetPrivateProfileIntW(L"Graphics", kGfxDetailKeys[d], cfg->gfxDetail[d], iniPath);
-        cfg->gfxDetail[d] = v < (UINT)kGfxDetailCount[d] ? (int)v : 0;
+        int v = (int)GetPrivateProfileIntW(L"Graphics", kGfxDetailKeys[d], -1, iniPath);
+        if (!levels && v >= 1) v = (d == 7 && v == 2) ? 2 : v - 1;
+        else if (!levels) v = -1;
+        cfg->gfxDetail[d] = v >= 0 && v < kGfxDetailCount[d] ? v : GfxPresetLevel(d, cfg->gfxPreset);
     }
 }
 
@@ -279,6 +293,7 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
         swprintf_s(buf, 64, L"%d", cfg->gfxDetail[d]);
         WritePrivateProfileStringW(L"Graphics", kGfxDetailKeys[d], buf, iniPath);
     }
+    WritePrivateProfileStringW(L"Graphics", L"DetailLevels", L"1", iniPath);
 
     WritePrivateProfileStringW(L"System", L"GamePath", cfg->gamePath, iniPath);
     WritePrivateProfileStringW(L"System", L"SavePath", cfg->savePath, iniPath);
@@ -336,7 +351,7 @@ static void GetEffectiveGameDir(const LauncherConfig *cfg, wchar_t *outPath, siz
         }
     }
 
-    // 1. Check local directory where OnRushLauncher is located
+    // 1. Check local directory where RushLauncher is located
     wchar_t localExe[MAX_PATH];
     swprintf_s(localExe, MAX_PATH, L"%ls\\game_release_xbox.exe", g_exeDir);
     if (GetFileAttributesW(localExe) != INVALID_FILE_ATTRIBUTES)
@@ -533,7 +548,7 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     SetEnvironmentVariableW(L"ONRUSH_FRAME_DUMPS", g_debugMode ? L"1" : nullptr);
     SetEnvironmentVariableW(L"ONRUSH_VERBOSE_LOG", g_debugMode ? L"1" : nullptr);
 
-    // Quick test mode ("OnRushLauncher.exe -gameplay", developer tests only): the bridge skips the boot screens.
+    // Quick test mode ("RushLauncher.exe -gameplay", developer tests only): the bridge skips the boot screens.
     {
         const wchar_t *cl = GetCommandLineW();
         bool qg = cl && wcsstr(cl, L"-gameplay");
