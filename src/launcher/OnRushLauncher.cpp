@@ -506,7 +506,7 @@ struct ModuleRecord
 
 // The playlist feature is parked until it is better integrated in the game: no tab, no drag-and-drop and
 // nothing is passed to the game. Set to 0 to bring it back (all the code is still in playlist_ui.inc).
-#define PLAYLIST_HIDDEN   1
+#define PLAYLIST_HIDDEN   0
 static bool ProfUnlocked(const std::wstring &name);  // profiles_ui.inc
 static bool ProfAllUnlocked(const std::wstring &name);
 static void KbSetGameEnv();                          // controls_ui.inc
@@ -578,16 +578,18 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     // Keyboard as a controller ("Controles" tab): onrush.ini [Keyboard] -> ONRUSH_KEYMAP for the bridge.
     KbSetGameEnv();
     SetEnvironmentVariableW(L"ONRUSH_PHOTO_FORMAT", _wcsicmp(cfg->photoFormat, L"jpg") == 0 ? L"jpg" : L"png");
-    // Own playlist (launcher "Playlist" tab): the bridge plays it and holds the game music at 0.
+    // Own playlist (launcher "Playlist" tab): the bridge plays it in place of the game music. It gets the
+    // chosen playlist even when "own music" is off: the game's PLAYLIST options can switch it on.
     {
         wchar_t pl[MAX_PATH] = {}, vol[16];
-        if (!PLAYLIST_HIDDEN && cfg->musicEnabled && cfg->musicPlaylist[0])  // playlist parked: the game keeps its own music
+        if (!PLAYLIST_HIDDEN && cfg->musicPlaylist[0])
         {
             swprintf_s(pl, MAX_PATH, L"%ls\\playlists\\%ls.m3u8", g_exeDir, cfg->musicPlaylist);
             if (GetFileAttributesW(pl) == INVALID_FILE_ATTRIBUTES) pl[0] = 0;
         }
         swprintf_s(vol, 16, L"%d", cfg->musicVolume);
         SetEnvironmentVariableW(L"ONRUSH_MUSIC_PLAYLIST", pl[0] ? pl : nullptr);
+        SetEnvironmentVariableW(L"ONRUSH_MUSIC_ENABLED", pl[0] ? (cfg->musicEnabled ? L"1" : L"0") : nullptr);
         SetEnvironmentVariableW(L"ONRUSH_MUSIC_SHUFFLE", pl[0] && cfg->musicShuffle ? L"1" : nullptr);
         SetEnvironmentVariableW(L"ONRUSH_MUSIC_VOLUME", pl[0] ? vol : nullptr);
     }

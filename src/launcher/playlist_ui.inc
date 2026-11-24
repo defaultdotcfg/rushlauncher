@@ -83,7 +83,7 @@ static const wchar_t *kPlStr[P_COUNT][3] = {
 };
 static const wchar_t *PT(PlStr s) { return kPlStr[s][g_uiLang]; }
 
-struct PlTrack { std::wstring path, title, artist; int secs = 0; };
+struct PlTrack { std::wstring path, title, artist; int secs = 0; bool off = false; };  // off: skipped in game (toggled there)
 static std::vector<std::wstring> g_plNames;   // playlists on disk, sorted
 static std::vector<PlTrack> g_plTracks;       // tracks of the current playlist
 static std::vector<int> g_plView;             // list rows -> g_plTracks index (search filter)
@@ -200,6 +200,7 @@ static void PlLoad(const std::wstring &name)
             haveMeta = true;
             continue;
         }
+        if (line == "#ONRUSH-OFF") { pending.off = true; continue; }
         if (line[0] == '#') continue;
         pending.path = FromUtf8(line);
         if (!haveMeta) PlReadTags(pending);
@@ -220,6 +221,7 @@ static void PlSave()
         char head[32]; sprintf_s(head, "#EXTINF:%d,", t.secs);
         out += head + ToUtf8(t.artist.empty() ? t.title : t.artist + L" - " + t.title) + "\r\n";
         out += "#ONRUSH:" + ToUtf8(t.title) + "\t" + ToUtf8(t.artist) + "\r\n";
+        if (t.off) out += "#ONRUSH-OFF\r\n";
         out += ToUtf8(t.path) + "\r\n";
     }
     HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);

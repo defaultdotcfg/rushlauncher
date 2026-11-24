@@ -417,7 +417,9 @@ static bool HookAt(uint8_t *site, const uint8_t *head, size_t len, void *hook, v
   uint8_t *q = mem;
   *trampoline = q;
   memcpy(q, head, len); q += len;
-  q = gfxopt::EmitJmpAbs(q, site + len);
+  // back to the game with jmp [rip+0] (no register touched: a head may set rax, e.g. mov rax,rsp)
+  const uint8_t *back = site + len;
+  *q++ = 0xFF; *q++ = 0x25; memset(q, 0, 4); q += 4; memcpy(q, &back, 8); q += 8;
   uint8_t *stub = q;
   q = gfxopt::EmitJmpAbs(q, hook);
   FlushInstructionCache(GetCurrentProcess(), mem, (size_t)(q - mem));

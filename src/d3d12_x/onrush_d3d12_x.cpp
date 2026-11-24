@@ -6911,19 +6911,19 @@ static void PatchUnlockCosmetics(HMODULE hExe) {
   }
 }
 
-// Wwise WASAPI sink init (exe+0xAA9FD0): this = sink, rdx = IMMDevice, r8 = output
-// settings (+0x14 = output type; 2 = main, 3 = background music). The sink keeps its
-// IAudioClient at +0x40. When the player's own playlist replaces the game music, the
-// music output stream is silenced here (the effects/voice output is untouched).
-typedef int (*PFN_WwiseSinkInit)(void *sink, void *device, void *settings);
+// Wwise WASAPI sink init (exe+0xAA9FD0, game 1.80): this = sink, rdx = IMMDevice, r8 = output
+// settings, r9d and a 5th byte passed through. The sink keeps its IAudioClient at +0x40 and its
+// IAudioRenderClient at +0x48 (channels at +0x5C). Game 1.80 opens a single output (music, effects and
+// voices mixed by Wwise; 1.0 had a separate background-music output), so the playlist silences the game
+// music through its Music_Volume RTPC instead (DetourSetRtpc).
+typedef int (*PFN_WwiseSinkInit)(void *sink, void *device, void *settings, int arg4, uint8_t arg5);
 static PFN_WwiseSinkInit g_TrueWwiseSinkInit = nullptr;
 static uint8_t g_WwiseSinkInitTramp[64] = {};
-static bool g_muteGameMusicOut = false;
 
-#include "music_player.h"
+namespace music { static float OnGameMusicVolume(float value); }  // music.inc: the playlist replaces the game music
 
-// Wraps a sink's IAudioRenderClient (sink+0x48): measures what each output sends
-// (ONRUSH_AUDIO_DIAG=1 logs per-output peaks) and can turn the output silent.
+// Wraps a sink's IAudioRenderClient (sink+0x48) for diagnostics: ONRUSH_AUDIO_DIAG=1 logs the output's
+// peaks, ONRUSH_AUDIO_DIAG_MUTE=1 silences it.
 struct RenderClientWrap : IAudioRenderClient {
   IAudioRenderClient *inner; volatile LONG refs = 1; int type; UINT32 chans; BYTE *last = nullptr;
   volatile bool silent = false; float peak = 0; double sq = 0; UINT64 frames = 0; bool diag;
@@ -6952,32 +6952,25 @@ struct RenderClientWrap : IAudioRenderClient {
     return inner->ReleaseBuffer(n, flags);
   }
 };
-static RenderClientWrap *volatile g_musicOutWrap = nullptr;
-
-static int DetourWwiseSinkInit(void *sink, void *device, void *settings) {
-  int r = g_TrueWwiseSinkInit(sink, device, settings);
-  int type = *(int *)((uint8_t *)settings + 0x14);
-  log_line("[audio] Wwise sink init type=%d -> %d\r\n", type, r);
+static int DetourWwiseSinkInit(void *sink, void *device, void *settings, int arg4, uint8_t arg5) {
+  int r = g_TrueWwiseSinkInit(sink, device, settings, arg4, arg5);
+  log_line("[audio] Wwise sink init -> %d\r\n", r);
   IAudioRenderClient **slot = (IAudioRenderClient **)((uint8_t *)sink + 0x48);
   if (r != 1 || !*slot) return r;
   bool diag = GetEnvironmentVariableA("ONRUSH_AUDIO_DIAG", nullptr, 0) != 0;
-  auto *w = new RenderClientWrap(*slot, type, *(UINT32 *)((uint8_t *)sink + 0x5C), diag);
+  bool mute = GetEnvironmentVariableA("ONRUSH_AUDIO_DIAG_MUTE", nullptr, 0) != 0;
+  if (!diag && !mute) return r;
+  static volatile LONG s_outputs = 0;
+  auto *w = new RenderClientWrap(*slot, (int)InterlockedIncrement(&s_outputs), *(UINT32 *)((uint8_t *)sink + 0x5C), diag);
   *slot = w;  // the sink owns the reference it got from GetService; the wrapper now holds it
-  char dm[8] = {};  // diagnostics: ONRUSH_AUDIO_DIAG_MUTE=<type> silences that output
-  if (GetEnvironmentVariableA("ONRUSH_AUDIO_DIAG_MUTE", dm, sizeof(dm)) && atoi(dm) == type) {
-    w->silent = true; log_line("[audio] diag: output type %d muted\r\n", type);
-  }
-  if (type == 3) {
-    g_musicOutWrap = w;
-    if (g_muteGameMusicOut) { w->silent = true; log_line("[audio] game music output muted (own playlist)\r\n"); }
-  }
+  if (mute) { w->silent = true; log_line("[audio] diag: output %d muted\r\n", w->type); }
   return r;
 }
 
 // Game audio layer SetRTPC(id, value) at exe+0x1F55B0: forwards to the audio system
 // object [exe+0x1675920] vtable slot 0xE0. The option sliders go through it, among them
-// "Music_Volume" (Wwise id = FNV-1 of the lower-case name). With the player's own
-// playlist the game music is held at 0 while effects/voices keep their volume.
+// "Music_Volume" (Wwise id = FNV-1 of the lower-case name). While the player's own playlist
+// replaces the game music (music.inc) the game music is held at 0; effects and voices keep their volume.
 static HMODULE g_rtpcExe = nullptr;
 static volatile bool g_forceGameMusicOff = false;
 static volatile LONG g_rtpcLogged = 0;
@@ -6994,7 +6987,7 @@ static void DetourSetRtpc(uint32_t id, float value) {
   if (g_rtpcLogged < 60 && GetEnvironmentVariableA("ONRUSH_AUDIO_DIAG", nullptr, 0)) {
     InterlockedIncrement(&g_rtpcLogged); log_line("[audio] rtpc id=%08X value=%.3f\r\n", id, value);
   }
-  if (id == kRtpcMusicVolume && g_forceGameMusicOff) value = 0.0f;
+  if (id == kRtpcMusicVolume) value = g_forceGameMusicOff ? 0.0f : music::OnGameMusicVolume(value);
   char zl[128] = {};  // diagnostics: ONRUSH_RTPC_ZERO=15D,15E forces those handles to 0
   if (GetEnvironmentVariableA("ONRUSH_RTPC_ZERO", zl, sizeof(zl))) {
     char *ctx = nullptr;
@@ -7004,6 +6997,11 @@ static void DetourSetRtpc(uint32_t id, float value) {
   void *sys = *(void **)((uint8_t *)g_rtpcExe + 0x01675920);
   typedef void (*PFN)(void *, uint32_t, float);
   ((PFN)(*(void ***)sys)[0xE0 / 8])(sys, id, value);
+}
+// Sends the game's music volume again (music.inc, when the playlist takes over or hands back the music).
+static void ResendMusicVolume(float gameValue) {
+  if (!g_rtpcExe || kRtpcMusicVolume == 0xFFFFFFFFu) return;
+  DetourSetRtpc(kRtpcMusicVolume, gameValue);
 }
 static void HookSetRtpc(HMODULE hExe) {
   uint8_t *p = (uint8_t *)hExe + 0x001F55B0;
@@ -7116,25 +7114,25 @@ static void HookTeamSetup(HMODULE hExe) {
 }
 
 static void HookWwiseSinkInit(HMODULE hExe) {
-  // prologue: push rbp/rsi/rdi/r15; lea rbp,[rsp-0x3F]; sub rsp,0xA8  (18 bytes, no rip-relative)
+  // prologue: push rbp/rsi/rdi/r13/r15; lea rbp,[rsp-0x2F]; sub rsp,0xA0  (20 bytes, no rip-relative)
   uint8_t *p = (uint8_t *)hExe + 0x00AA9FD0;
-  static const uint8_t expected[18] = {0x40, 0x55, 0x56, 0x57, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xC1,
-                                       0x48, 0x81, 0xEC, 0xA8, 0x00, 0x00, 0x00};
-  if (memcmp(p, expected, 18) != 0) { log_line("[audio] WARNING: unexpected sink init prologue; not hooked\r\n"); return; }
+  const size_t kLen = 20;
+  static const uint8_t expected[kLen] = {0x40, 0x55, 0x56, 0x57, 0x41, 0x55, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xD1,
+                                         0x48, 0x81, 0xEC, 0xA0, 0x00, 0x00, 0x00};
+  if (memcmp(p, expected, kLen) != 0) { log_line("[audio] WARNING: unexpected sink init prologue; not hooked\r\n"); return; }
   DWORD old = 0;
   if (!VirtualProtect(g_WwiseSinkInitTramp, sizeof(g_WwiseSinkInitTramp), PAGE_EXECUTE_READWRITE, &old)) return;
-  memcpy(g_WwiseSinkInitTramp, p, 18);
-  uint8_t *j = g_WwiseSinkInitTramp + 18;
-  j[0] = 0xFF; j[1] = 0x25; *(uint32_t *)(j + 2) = 0; *(uint64_t *)(j + 6) = (uint64_t)(p + 18);
+  memcpy(g_WwiseSinkInitTramp, p, kLen);
+  uint8_t *j = g_WwiseSinkInitTramp + kLen;
+  j[0] = 0xFF; j[1] = 0x25; *(uint32_t *)(j + 2) = 0; *(uint64_t *)(j + 6) = (uint64_t)(p + kLen);
   FlushInstructionCache(GetCurrentProcess(), g_WwiseSinkInitTramp, sizeof(g_WwiseSinkInitTramp));
   g_TrueWwiseSinkInit = (PFN_WwiseSinkInit)(void *)g_WwiseSinkInitTramp;
-  if (!VirtualProtect(p, 18, PAGE_EXECUTE_READWRITE, &old)) return;
+  if (!VirtualProtect(p, kLen, PAGE_EXECUTE_READWRITE, &old)) return;
   p[0] = 0xFF; p[1] = 0x25; *(uint32_t *)(p + 2) = 0; *(uint64_t *)(p + 6) = (uint64_t)&DetourWwiseSinkInit;
-  p[14] = p[15] = p[16] = p[17] = 0x90;
-  VirtualProtect(p, 18, old, &old);
-  FlushInstructionCache(GetCurrentProcess(), p, 18);
-  g_muteGameMusicOut = GetEnvironmentVariableA("ONRUSH_MUTE_GAME_MUSIC", nullptr, 0) != 0;
-  log_line("[audio] Hooked Wwise sink init (mute game music: %d)\r\n", g_muteGameMusicOut ? 1 : 0);
+  for (size_t k = 14; k < kLen; ++k) p[k] = 0x90;
+  VirtualProtect(p, kLen, old, &old);
+  FlushInstructionCache(GetCurrentProcess(), p, kLen);
+  log_line("[audio] Hooked Wwise sink init\r\n");
 }
 
 // On Durango GPU virtual addresses are CPU-visible, and the resource init code
@@ -7232,6 +7230,7 @@ static void PatchBootDoneFlag(HMODULE hExe) {
 #include "language.inc"
 #include "main_menu.inc"
 #include "profile_switch.inc"
+#include "music.inc"
 namespace ups { static void Install(HMODULE hExe); }   // upscaler.inc
 
 // Title screen without the dead online services. After "press A" the title state machine
@@ -7630,7 +7629,6 @@ static void PatchAllocThunk(HMODULE hExe) {
   HookWwiseSinkInit(hExe);
   HookTeamSetup(hExe);
   g_forceGameMusicOff = GetEnvironmentVariableA("ONRUSH_MUTE_GAME_MUSIC", nullptr, 0) != 0;
-  if (music::Start()) g_forceGameMusicOff = true;  // player's own playlist replaces the game music
   HookSetRtpc(hExe);
   PatchGameFreeThunk(hExe);
   PatchBootDoneFlag(hExe);
@@ -7640,6 +7638,7 @@ static void PatchAllocThunk(HMODULE hExe) {
   lang::Install(hExe);
   mainmenu::Install(hExe);
   profsw::Install(hExe);
+  music::Install(hExe);
   ups::Install(hExe);
   PatchSkipOnlineWait(hExe);
   PatchVoiceLanguage(hExe);

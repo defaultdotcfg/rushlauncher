@@ -38,6 +38,7 @@ O launcher cuida de tudo: prepara o jogo a partir da sua cópia, aplica o patch 
 - **Versão final do jogo.** Se a sua cópia for a 1.0.64980.34, o launcher aplica o patch 1.80.100.100 sozinho.
 - **Controle ou teclado.** Controles de Xbox funcionam direto. O teclado também serve de controle, com as teclas configuráveis na aba **Controles**.
 - **Perfis.** Vários jogadores, cada um com o próprio save e as próprias horas de jogo.
+- **Playlist própria.** Suas músicas tocam no lugar da trilha do jogo, seguindo o jogo (param no carregamento e na pausa). As playlists são montadas na aba **Playlist**; no jogo, **Configurações > Playlist** escolhe entre a música do jogo e a playlist, a ordem e quais músicas tocam.
 - **Modo foto.** **F12** salva a imagem do jogo sem a interface, em PNG ou JPG. A aba **Fotos** mostra a galeria.
 - **Atualização automática.** O launcher procura novas versões no GitHub e se atualiza sozinho, mantendo configurações, saves e shaders.
 - **Discord Rich Presence (em implantação)**, idiomas do texto e da voz do jogo, e launcher em português, inglês e espanhol.

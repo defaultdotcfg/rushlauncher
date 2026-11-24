@@ -1184,6 +1184,12 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             GetPrivateProfileStringW(L"Language", L"Voice", g_config.voiceLang, g_config.voiceLang, 16, ini);
             if (g_hTextLangCombo) FillGameLangCombo(g_hTextLangCombo, T(S_LANG_SYSTEM), g_config.textLang);
             if (g_hVoiceLangCombo) FillGameLangCombo(g_hVoiceLangCombo, T(S_LANG_SAME), g_config.voiceLang);
+            // ... and the game's PLAYLIST options (own music, order, songs switched off in the .m3u8)
+            g_config.musicEnabled = GetPrivateProfileIntW(L"Music", L"Enabled", g_config.musicEnabled, ini);
+            g_config.musicShuffle = GetPrivateProfileIntW(L"Music", L"Shuffle", g_config.musicShuffle, ini);
+            PlSelect(PlFindName(g_config.musicPlaylist));
+            if (g_hPlEnable) InvalidateRect(g_hPlEnable, nullptr, TRUE);
+            if (g_hPlShuffle) InvalidateRect(g_hPlShuffle, nullptr, TRUE);
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         if (g_minimizedForGame && switchTo.empty())
