@@ -1,6 +1,8 @@
 # Changelog
 
-## Próxima versão
+## v0.3.0 — playlist no jogo, DLSS e FSR 3.1/4, mudar usuário
+
+**Como atualizar:** o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.
 
 ### Novidades
 - **Configurações > Mudar usuário** agora funciona: mostra os perfis do launcher, e o jogo reinicia já no perfil escolhido, com os desbloqueios dele. Um aviso do jogo confirma a troca.
