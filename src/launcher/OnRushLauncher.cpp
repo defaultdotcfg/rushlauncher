@@ -506,6 +506,10 @@ struct ModuleRecord
 static bool ProfUnlocked(const std::wstring &name);  // profiles_ui.inc
 static bool ProfAllUnlocked(const std::wstring &name);
 static void KbSetGameEnv();                          // controls_ui.inc
+// The game's Options > CHANGE USER (bridge profile_switch.inc) writes the chosen profile to onrush.ini
+// [Player] SwitchTo and ends with this exit code; the launcher then starts it again with that profile.
+static const DWORD kExitProfileSwitch = 0x52530050;
+static volatile bool g_profileSwitchLaunch = false;  // this start follows a switch: skip the intro, show the notice
 static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 {
     LauncherConfig *cfg = (LauncherConfig *)lpParam;
@@ -555,7 +559,10 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
         const wchar_t *cl = GetCommandLineW();
         bool qg = cl && wcsstr(cl, L"-gameplay");
         SetEnvironmentVariableW(L"ONRUSH_GAMEPLAY", qg ? L"1" : nullptr);
-        SetEnvironmentVariableW(L"ONRUSH_SKIP_INTRO", cfg->skipIntro ? L"1" : nullptr);
+        bool switched = g_profileSwitchLaunch;
+        g_profileSwitchLaunch = false;
+        SetEnvironmentVariableW(L"ONRUSH_SKIP_INTRO", cfg->skipIntro || switched ? L"1" : nullptr);
+        SetEnvironmentVariableW(L"ONRUSH_PROFILE_SWITCHED", switched ? L"1" : nullptr);
     }
     // Game languages: text via kernelx GetUserDefaultLocaleName, voice via the bridge's audio-table patch.
     SetEnvironmentVariableW(L"ONRUSH_TEXT_LANG", cfg->textLang[0] ? cfg->textLang : nullptr);

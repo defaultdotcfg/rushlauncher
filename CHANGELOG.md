@@ -1,5 +1,10 @@
 # Changelog
 
+## Próxima versão
+
+### Novidades
+- **Configurações > Mudar usuário** agora funciona: mostra os perfis do launcher, e o jogo reinicia já no perfil escolhido, com os desbloqueios dele. Um aviso do jogo confirma a troca.
+
 ## v0.2.0 — opções gráficas no jogo, FSR 2, mouse e nuvens
 
 **Como atualizar:** não é preciso apagar a pasta do launcher. A partir da v0.1.1, o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual. No primeiro JOGAR depois de atualizar, o launcher refaz parte dos shaders já preparados.

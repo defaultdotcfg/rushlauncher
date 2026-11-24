@@ -1148,7 +1148,22 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     }
 
     case WM_GAME_EXITED:
+    {
         g_gameRunning = false;
+        // Options > CHANGE USER in the game: it ended asking for another profile (only an existing one)
+        std::wstring switchTo;
+        {
+            wchar_t ini[MAX_PATH], to[64] = {};
+            swprintf_s(ini, MAX_PATH, L"%ls\\onrush.ini", g_exeDir);
+            GetPrivateProfileStringW(L"Player", L"SwitchTo", L"", to, 64, ini);
+            if (to[0]) WritePrivateProfileStringW(L"Player", L"SwitchTo", nullptr, ini);
+            if ((DWORD)lParam == kExitProfileSwitch && to[0])
+            {
+                ProfRefresh(L"");
+                for (auto &n : g_profNames) if (n == ProfCleanName(to) && _wcsicmp(n.c_str(), g_config.playerName)) switchTo = n;
+                if (switchTo.empty()) LogPrintf(L"[Perfis] troca pedida pelo jogo para um perfil desconhecido: %ls\r\n", to);
+            }
+        }
         {   // options changed in the game's GRAPHICS page were written to onrush.ini: take them back
             wchar_t ini[MAX_PATH];
             swprintf_s(ini, MAX_PATH, L"%ls\\onrush.ini", g_exeDir);
@@ -1171,7 +1186,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             if (g_hVoiceLangCombo) FillGameLangCombo(g_hVoiceLangCombo, T(S_LANG_SAME), g_config.voiceLang);
             InvalidateRect(hwnd, nullptr, FALSE);
         }
-        if (g_minimizedForGame)
+        if (g_minimizedForGame && switchTo.empty())
         {   // minimized by "Minimizar o launcher ao jogar": back when the game closes
             g_minimizedForGame = false;
             if (IsIconic(hwnd)) { ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); }
@@ -1189,6 +1204,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_discordShown = false;
         g_discord.Clear();
         g_discord.Close();
+        if (!switchTo.empty())
+        {   // straight back into the game with the chosen profile (its own unlock switches apply)
+            LogPrintf(L"[Perfis] o jogo pediu o perfil %ls: reabrindo\r\n", switchTo.c_str());
+            ProfUse(switchTo);
+            ProfRefresh(L"");
+            g_profileSwitchLaunch = true;
+            PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(ID_BTN_LAUNCH, 0), 0);
+            return 0;
+        }
         // a shader the packs did not have (the bridge dumps any it meets) gets translated now, so the next JOGAR starts right away
         {
             wchar_t tr[MAX_PATH];
@@ -1199,6 +1223,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
         }
         return 0;
+    }
 
     case WM_COMMAND:
     {

@@ -13,6 +13,8 @@
 // The constructor gets copies of the key and page tables with one more entry and a count of 9; the
 // enabled check is replaced by the same code that also enables our entry; the event handler shows the
 // confirmation for our entry and gives it its description.
+namespace profsw { static void OnMainMenu(); }  // profile_switch.inc
+
 namespace mainmenu {
 
 static const int kGameCount = 8;
@@ -43,6 +45,7 @@ static PFN_Event g_trueEvent = nullptr;
 
 static void __cdecl HookEvent(uint8_t *page, void *table, int event, int index) {
   uint8_t *obj = *(uint8_t **)(page + 0x2D8);
+  if (IsMainMenu(obj)) profsw::OnMainMenu();  // after a profile switch: the notice, once
   bool ours = IsMainMenu(obj) && index == kQuitIndex;
   if (ours && event == 3 && table == *(void **)(obj + 0x480)) {
     ((void (*)())((uint8_t *)gfxopt::g_exe + 0x001D7340))();  // the confirm sound

@@ -178,6 +178,31 @@ static const Text kTexts[] = {
                       "Voulez-vous vraiment revenir au bureau ?", "¿Seguro que quieres volver al escritorio?",
                       "Möchtest du wirklich zum Desktop zurückkehren?", "Vuoi davvero tornare al desktop?",
                       "Czy na pewno chcesz wrócić na pulpit?"}},
+  // Options > CHANGE USER (profile_switch.inc)
+  {"ID_RL_PROF_ASK", {"Choose a profile. The game restarts with the chosen profile.",
+                      "Escolha um perfil. O jogo reinicia com o perfil escolhido.",
+                      "Choisissez un profil. Le jeu redémarre avec le profil choisi.",
+                      "Elige un perfil. El juego se reinicia con el perfil elegido.",
+                      "Wähle ein Profil. Das Spiel startet mit dem gewählten Profil neu.",
+                      "Scegli un profilo. Il gioco si riavvia con il profilo scelto.",
+                      "Wybierz profil. Gra uruchomi się ponownie z wybranym profilem."}},
+  {"ID_RL_PROF_NONE", {"There are no other profiles. Create one in the Profiles tab of RushLauncher.",
+                       "Não há outros perfis. Crie um na aba Perfis do RushLauncher.",
+                       "Il n'y a pas d'autre profil. Créez-en un dans l'onglet Profils de RushLauncher.",
+                       "No hay otros perfiles. Crea uno en la pestaña Perfiles de RushLauncher.",
+                       "Es gibt keine anderen Profile. Erstelle eines im Tab Profile von RushLauncher.",
+                       "Non ci sono altri profili. Creane uno nella scheda Profili di RushLauncher.",
+                       "Brak innych profili. Utwórz profil w karcie Profile w RushLauncher."}},
+  {"ID_RL_PROF_NOLAUNCHER", {"Start the game through RushLauncher to change profiles.",
+                             "Abra o jogo pelo RushLauncher para trocar de perfil.",
+                             "Lancez le jeu via RushLauncher pour changer de profil.",
+                             "Abre el juego desde RushLauncher para cambiar de perfil.",
+                             "Starte das Spiel über RushLauncher, um das Profil zu wechseln.",
+                             "Avvia il gioco da RushLauncher per cambiare profilo.",
+                             "Uruchom grę przez RushLauncher, aby zmienić profil."}},
+  {"ID_RL_PROF_DONE", {"Profile changed to %s.", "Perfil trocado para %s.", "Profil changé : %s.",
+                       "Perfil cambiado a %s.", "Profil gewechselt zu %s.", "Profilo cambiato in %s.",
+                       "Zmieniono profil na %s."}},
   {"ID_RL_SAME_AS_TEXT", {"SAME AS TEXT", "IGUAL AO TEXTO", "COMME LE TEXTE", "IGUAL AL TEXTO", "WIE TEXT",
                           "COME IL TESTO", "JAK TEKST"}},
   {"ID_RL_LANG_EN", {"ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH", "ENGLISH"}},
@@ -209,7 +234,10 @@ static const char *HookLocalise(const char *key) {
     for (int i = 0; i < (int)_countof(kPctKeys); ++i)
       if (strcmp(key, kPctKeys[i]) == 0) return kPctLabels[i];
     // aspect ratios and resolutions: the text is the key's tail ("ID_RL_AR_16:9", "ID_RL_DR_2560x1440")
-    if ((key[6] == 'A' && key[7] == 'R' || key[6] == 'D' && key[7] == 'R') && key[8] == '_') return key + 9;
+    // profile names and composed sentences too ("ID_RL_PN_<name>", "ID_RL_TX_<text>", profile_switch.inc)
+    if ((key[6] == 'A' && key[7] == 'R' || key[6] == 'D' && key[7] == 'R' || key[6] == 'P' && key[7] == 'N' ||
+         key[6] == 'T' && key[7] == 'X') && key[8] == '_')
+      return key + 9;
     for (const Text &t : kTexts)
       if (strcmp(key, t.key) == 0) return t.t[TextLang()];
   }
