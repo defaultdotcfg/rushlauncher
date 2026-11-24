@@ -1,6 +1,8 @@
 # Changelog
 
-## Próxima versão
+## v0.3.1 — diagnóstico gráfico e relatório de problemas
+
+**Como atualizar:** o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.
 
 ### Novidades
 - Botão "Gerar relatório" na tela de log: junta os logs, as configurações e as últimas capturas (F11) num único arquivo .zip para enviar junto com um problema.
