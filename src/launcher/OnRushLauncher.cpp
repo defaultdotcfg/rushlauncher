@@ -509,6 +509,30 @@ static void KbSetGameEnv();                          // controls_ui.inc
 // [Player] SwitchTo and ends with this exit code; the launcher then starts it again with that profile.
 static const DWORD kExitProfileSwitch = 0x52530050;
 static volatile bool g_profileSwitchLaunch = false;  // this start follows a switch: skip the intro, show the notice
+// Launchers up to v0.3.0 copied the console's D3DCompiler_47.dll next to the game. Nothing uses it (the
+// bridge loads the Windows one), but being in the game folder it wins the DLL search for anything loading
+// it by name: RenderDoc then fails to build its shaders and the game crashes under capture. Removed only
+// when it is byte-for-byte the console file from <game>\EmbeddedXvd, so a DLL the user put there stays.
+static void RemoveConsoleD3DCompiler(const wchar_t *gameDir)
+{
+    wchar_t here[MAX_PATH], console[MAX_PATH];
+    swprintf_s(here, MAX_PATH, L"%ls\\D3DCompiler_47.dll", gameDir);
+    swprintf_s(console, MAX_PATH, L"%ls\\EmbeddedXvd\\Windows\\System32\\D3DCompiler_47.dll", gameDir);
+    auto readAll = [](const wchar_t *p, std::vector<BYTE> &out) {
+        HANDLE h = CreateFileW(p, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        LARGE_INTEGER sz = {}; DWORD got = 0;
+        bool ok = GetFileSizeEx(h, &sz) && sz.QuadPart > 0 && sz.QuadPart < (64ll << 20);
+        if (ok) { out.resize((size_t)sz.QuadPart); ok = ReadFile(h, out.data(), (DWORD)out.size(), &got, nullptr) && got == out.size(); }
+        CloseHandle(h);
+        return ok;
+    };
+    std::vector<BYTE> a, b;
+    if (!readAll(here, a) || !readAll(console, b) || a != b) return;
+    if (DeleteFileW(here)) LogPrintf(L"[LAUNCHER] Removida a cópia antiga do D3DCompiler_47.dll do console da pasta do jogo\r\n");
+    else LogPrintf(L"[LAUNCHER] Não foi possível remover D3DCompiler_47.dll do console (erro %lu)\r\n", GetLastError());
+}
+
 static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 {
     LauncherConfig *cfg = (LauncherConfig *)lpParam;
@@ -611,6 +635,8 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
         PostMessageW(g_hMainWnd, WM_GAME_EXITED, 0, (LPARAM)ERROR_FILE_NOT_FOUND);
         return 1;
     }
+
+    RemoveConsoleD3DCompiler(gameDir);
 
     STARTUPINFOW si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};

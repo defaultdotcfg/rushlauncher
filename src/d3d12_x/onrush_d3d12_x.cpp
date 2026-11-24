@@ -9681,9 +9681,11 @@ static bool g_bLoadedD3DDisassemble = false;
 static void EnsureD3DCompilerLoaded() {
   if (g_bLoadedD3DDisassemble) return;
   g_bLoadedD3DDisassemble = true;
-  HMODULE hComp = LoadLibraryA("D3DCompiler_47.dll");
+  // The Windows compiler (the one the offline translator uses), not a console copy that older
+  // launcher versions put next to the game.
+  HMODULE hComp = LoadLibraryExW(L"D3DCompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
   if (!hComp) {
-    hComp = LoadLibraryA("C:\\Windows\\System32\\D3DCompiler_47.dll");
+    hComp = LoadLibraryA("D3DCompiler_47.dll");
   }
   if (hComp) {
     g_pfnD3DDisassemble = (PFN_D3DDisassemble)GetProcAddress(hComp, "D3DDisassemble");

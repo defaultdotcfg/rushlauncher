@@ -985,6 +985,21 @@ EXTERN_C HANDLE WINAPI EraCreateFileA(
   return h;
 }
 
+// Loader entry points are real functions, not export forwarders: a forwarder sends the caller
+// straight to kernel32, past tools that hook kernel32 imports (RenderDoc, PIX), so a module
+// importing these from kernelx (the game, d3d12_x) would be invisible to them. Our own imports
+// of kernel32 are the ones those tools patch.
+EXTERN_C FARPROC WINAPI EraGetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
+  return GetProcAddress(hModule, lpProcName);
+}
+EXTERN_C HMODULE WINAPI EraLoadLibraryW(LPCWSTR lpLibFileName) { return LoadLibraryW(lpLibFileName); }
+EXTERN_C HMODULE WINAPI EraLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+  return LoadLibraryExW(lpLibFileName, hFile, dwFlags);
+}
+EXTERN_C HMODULE WINAPI EraLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+  return LoadLibraryExA(lpLibFileName, hFile, dwFlags);
+}
+
 // The game picks its TEXT language from the user locale (exe+0x974B0). Launcher option
 // ONRUSH_TEXT_LANG=<locale> (en-US, pt-BR, fr-FR, es-ES, de-DE, it-IT, pl-PL) overrides it.
 EXTERN_C int WINAPI EraGetUserDefaultLocaleName(LPWSTR lpLocaleName, int cchLocaleName) {
@@ -1545,7 +1560,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
                 "/export:GetOverlappedResult=kernel32.GetOverlappedResult")
 #pragma comment(                                                               \
     linker, "/export:GetOverlappedResultEx=kernel32.GetOverlappedResultEx")
-#pragma comment(linker, "/export:GetProcAddress=kernel32.GetProcAddress")
+#pragma comment(linker, "/export:GetProcAddress=EraGetProcAddress")
 #pragma comment(                                                               \
     linker, "/export:GetProcessAffinityMask=kernel32.GetProcessAffinityMask")
 #pragma comment(                                                               \
@@ -1718,9 +1733,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 #pragma comment(                                                               \
     linker,                                                                    \
     "/export:LeaveCriticalSectionWhenCallbackReturns=kernel32.LeaveCriticalSectionWhenCallbackReturns")
-#pragma comment(linker, "/export:LoadLibraryExA=kernel32.LoadLibraryExA")
-#pragma comment(linker, "/export:LoadLibraryExW=kernel32.LoadLibraryExW")
-#pragma comment(linker, "/export:LoadLibraryW=kernel32.LoadLibraryW")
+#pragma comment(linker, "/export:LoadLibraryExA=EraLoadLibraryExA")
+#pragma comment(linker, "/export:LoadLibraryExW=EraLoadLibraryExW")
+#pragma comment(linker, "/export:LoadLibraryW=EraLoadLibraryW")
 #pragma comment(linker,                                                        \
                 "/export:LoadPackagedLibrary=kernel32.LoadPackagedLibrary")
 #pragma comment(linker, "/export:LoadResource=kernel32.LoadResource")

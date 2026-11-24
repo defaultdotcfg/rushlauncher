@@ -1,5 +1,10 @@
 # Changelog
 
+## Próxima versão
+
+### Correções
+- O jogo pode ser capturado com o RenderDoc (ferramenta de depuração gráfica). Antes, ele fechava logo ao abrir. O launcher apaga da pasta do jogo um arquivo do console que não é mais usado e causava isso.
+
 ## v0.3.0 — playlist no jogo, DLSS e FSR 3.1/4, mudar usuário
 
 **Como atualizar:** o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.

@@ -13,7 +13,9 @@
 static const wchar_t *kPortFiles[] = { L"d3d12_x.dll", L"kernelx.dll", L"combase.dll", L"EtwPlus.dll", L"MMDevAPI.dll" };
 static const wchar_t *kGameFiles[] = { L"game_release_xbox.exe", L"appxmanifest.xml", L"XboxIntegratedMultiplayer.dll", L"Bink2XboxOne.dll",
                                        L"appdata.bin", L"Catalog000.bin", L"resources.pri", L"saveversions.txt", L"SplashScreen.png" };
-static const wchar_t *kSystemFiles[] = { L"AcpHal.dll", L"ACP_kernel.bin", L"xg_x.dll", L"xaudio2_9.dll", L"D3DCompiler_47.dll" };
+// (not the console D3DCompiler_47.dll: the port uses the Windows one, and a copy here would
+// shadow it for anything loading it by name, e.g. RenderDoc)
+static const wchar_t *kSystemFiles[] = { L"AcpHal.dll", L"ACP_kernel.bin", L"xg_x.dll", L"xaudio2_9.dll" };
 
 static bool FileExistsIn(const wchar_t *dir, const wchar_t *name)
 {

@@ -32,7 +32,7 @@ foreach ($f in "game_release_xbox.exe", "appxmanifest.xml", "XboxIntegratedMulti
 }
 # 2. console system libraries the game loads (from your copy's EmbeddedXvd)
 $sys32 = Join-Path $GameRoot "EmbeddedXvd\Windows\System32"
-foreach ($f in "AcpHal.dll", "ACP_kernel.bin", "xg_x.dll", "xaudio2_9.dll", "D3DCompiler_47.dll") {
+foreach ($f in "AcpHal.dll", "ACP_kernel.bin", "xg_x.dll", "xaudio2_9.dll") {
     if (Test-Path "$sys32\$f") { Copy-Item "$sys32\$f" $Destination -Force; Write-Host "  system library: $f" }
 }
 # 3. port binaries
