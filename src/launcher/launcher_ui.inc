@@ -10,6 +10,8 @@
 
 #define ID_BTN_ADVANCED   1020
 #define ID_BTN_SHOW_LOG   1021
+#define ID_GFXDIAG_CHK    1140
+#define ID_BTN_REPORT     1141
 #define ID_DISCORD_CHK    1022
 #define ID_SKIPINTRO_CHK  1024
 #include <shobjidl.h>
@@ -85,7 +87,7 @@ static void DrawRailBrand(Gdiplus::Graphics &g)
     }
     g.DrawString(L"v" OLAUNCHER_VERSION, -1, &fTag, Gdiplus::RectF(0.f, ly + lh + 6.f, 216.f, 16.f), &center, &orange);
 }
-static bool g_vsyncOn = true, g_d3dDebugOn = false, g_verboseOn = false, g_skipIntroOn = false;
+static bool g_vsyncOn = true, g_d3dDebugOn = false, g_verboseOn = false, g_skipIntroOn = false, g_gfxDiagOn = false;
 static HWND g_hSkipIntroChk = nullptr;
 #define ID_MINIMIZE_CHK   1023
 #define ID_THEME_COMBO    1031
@@ -95,7 +97,7 @@ static bool g_showAdvanced = false, g_showLog = false;
 static bool g_discordOn = true;
 static char g_discordAppId[64] = {};
 static HWND g_hDiscordChk = nullptr;
-static HWND g_hAdvBtn = nullptr, g_hLogBtn = nullptr, g_hClearLogBtn = nullptr, g_hCopyLogBtn = nullptr;
+static HWND g_hAdvBtn = nullptr, g_hLogBtn = nullptr, g_hClearLogBtn = nullptr, g_hCopyLogBtn = nullptr, g_hReportBtn = nullptr, g_hGfxDiagChk = nullptr;
 static bool g_gameDirOk = false;
 static wchar_t g_gameDirShown[MAX_PATH] = {};
 static HFONT g_hFontSmallCaps = nullptr, g_hFontPlay = nullptr;
@@ -123,7 +125,7 @@ enum UiStr {
     S_SETUP_ASK, S_SETUP_FAIL, S_SETUP_NOPORT, S_UPD_ASK_INSTALL, S_UPD_DL, S_UPD_GAMERUN, S_UPD_DLFAIL,
     S_HOME_TITLE, S_HOME_HINT, S_INSTALL_TITLE, S_INSTALL_HINT, S_INSTALL_READY, S_INSTALL_MISSING,
     S_PATCH_ASK, S_PICK_PATCH, S_BAD_PATCH, S_PATCH_CONFIRM, S_PATCH_PROGRESS, S_PATCH_FAIL, S_HOME_PROFILE, S_HOME_PLAYTIME,
-    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_OLD_GAME, S_LOST_COPY, S_ASPECT, S_COUNT
+    S_MINIMIZE, S_THEME, S_THEME_DARK, S_THEME_LIGHT, S_TAB_SETTINGS, S_OLD_GAME, S_LOST_COPY, S_ASPECT, S_GFXDIAG, S_REPORT, S_REPORT_OK, S_REPORT_FAIL, S_COUNT
 };
 static const wchar_t *kUiStr[S_COUNT][3] = {
     { L"CONFIGURAÇÕES", L"SETTINGS", L"CONFIGURACIÓN" },
@@ -232,8 +234,142 @@ static const wchar_t *kUiStr[S_COUNT][3] = {
       L"The game folder was set up from the ONRUSH copy at\n%ls\nbut that folder no longer exists (it was moved, renamed or deleted).\n\nChoose where your ONRUSH copy (the extracted package) is now so the launcher can point the game folder at it again.",
       L"La carpeta del juego se preparó a partir de la copia de ONRUSH en\n%ls\npero esa carpeta ya no existe (se movió, renombró o borró).\n\nElige dónde está tu copia de ONRUSH (el paquete extraído) para que el launcher vuelva a enlazar la carpeta del juego con ella." },
     { L"Proporção de tela", L"Aspect ratio", L"Relación de aspecto" },
+    { L"Diagnóstico gráfico (mede a imagem quadro a quadro no log)", L"Graphics diagnostic (measures the image pass by pass in the log)", L"Diagnóstico gráfico (mide la imagen paso a paso en el registro)" },
+    { L"Gerar relatório", L"Create report", L"Crear informe" },
+    { L"[LAUNCHER] Relatório criado: %ls (envie esse arquivo junto com o problema)\r\n", L"[LAUNCHER] Report created: %ls (send this file with your issue)\r\n",
+      L"[LAUNCHER] Informe creado: %ls (envía este archivo junto con el problema)\r\n" },
+    { L"[LAUNCHER] Não foi possível criar o relatório (%ls)\r\n", L"[LAUNCHER] Could not create the report (%ls)\r\n", L"[LAUNCHER] No se pudo crear el informe (%ls)\r\n" },
 };
 static const wchar_t *T(UiStr s) { return kUiStr[s][g_uiLang]; }
+
+// ---- "Gerar relatório" (log view): everything a bug report needs in one zip next to the launcher: the logs of
+// the last two sessions (launcher, bridge, kernel), the settings and the newest F11 captures. The files are
+// copied to a temporary folder first (read with full sharing, so it also works while the game runs and writes
+// its log) and zipped by Windows' own tar.exe; the folder then opens with the zip selected.
+static volatile LONG g_reportBusy = 0;
+
+// Copies src to dst even while another process has it open for writing.
+static bool ReportCopy(const wchar_t *src, const wchar_t *dst)
+{
+    HANDLE in = CreateFileW(src, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (in == INVALID_HANDLE_VALUE) return false;
+    HANDLE out = CreateFileW(dst, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    bool ok = out != INVALID_HANDLE_VALUE;
+    static char buf[1 << 16];
+    DWORD n = 0, w = 0;
+    while (ok && ReadFile(in, buf, sizeof(buf), &n, nullptr) && n) ok = WriteFile(out, buf, n, &w, nullptr) && w == n;
+    CloseHandle(in);
+    if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+    if (!ok) DeleteFileW(dst);
+    return ok;
+}
+
+static void ReportRemoveDir(const wchar_t *dir)
+{
+    wchar_t pat[MAX_PATH], f[MAX_PATH];
+    swprintf_s(pat, MAX_PATH, L"%ls\\*", dir);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE)
+    {
+        do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) { swprintf_s(f, MAX_PATH, L"%ls\\%ls", dir, fd.cFileName); DeleteFileW(f); } } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    RemoveDirectoryW(dir);
+}
+
+static DWORD WINAPI ReportThread(LPVOID param)
+{
+    std::wstring gameDir((const wchar_t *)param);
+    free(param);
+    SYSTEMTIME st; GetLocalTime(&st);
+    wchar_t stamp[32], tmp[MAX_PATH], stage[MAX_PATH], zip[MAX_PATH], src[MAX_PATH], dst[MAX_PATH];
+    swprintf_s(stamp, 32, L"%04u%02u%02u_%02u%02u%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    GetTempPathW(MAX_PATH, tmp);
+    swprintf_s(stage, MAX_PATH, L"%lsrushlauncher_report_%ls", tmp, stamp);
+    swprintf_s(zip, MAX_PATH, L"%ls\\relatorio_%ls.zip", g_exeDir, stamp);
+    CreateDirectoryW(stage, nullptr);
+
+    int copied = 0;
+    std::wstring names;
+    auto add = [&](const std::wstring &dir, const wchar_t *name) {
+        swprintf_s(src, MAX_PATH, L"%ls\\%ls", dir.c_str(), name);
+        swprintf_s(dst, MAX_PATH, L"%ls\\%ls", stage, name);
+        if (GetFileAttributesW(dst) == INVALID_FILE_ATTRIBUTES && ReportCopy(src, dst)) { ++copied; names += L" \""; names += name; names += L"\""; }
+    };
+    const wchar_t *kGameFiles[] = { L"onrush_d3d12_x.log", L"onrush_d3d12_x.prev.log", L"kernelx.log", L"kernelx.prev.log" };
+    const wchar_t *kLauncherFiles[] = { L"onrush_launcher.log", L"onrush_launcher.prev.log", L"onrush.ini" };
+    for (const wchar_t *f : kLauncherFiles) add(g_exeDir, f);
+    if (!gameDir.empty()) for (const wchar_t *f : kGameFiles) add(gameDir, f);
+    for (const wchar_t *f : kGameFiles) add(g_exeDir, f);   // same folder in a normal install
+
+    // the newest F11 captures (one burst is 12 frames; 6 are enough to see the problem)
+    struct Cap { std::wstring name; ULONGLONG time; };
+    std::vector<Cap> caps;
+    if (!gameDir.empty())
+    {
+        wchar_t pat[MAX_PATH];
+        swprintf_s(pat, MAX_PATH, L"%ls\\frame_*_backbuffer.bmp", gameDir.c_str());
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(pat, &fd);
+        if (h != INVALID_HANDLE_VALUE)
+        {
+            do caps.push_back({ fd.cFileName, ((ULONGLONG)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime }); while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+        std::sort(caps.begin(), caps.end(), [](const Cap &a, const Cap &b) { return a.time > b.time; });
+        for (size_t i = 0; i < caps.size() && i < 6; ++i) add(gameDir, caps[i].name.c_str());
+    }
+
+    bool ok = false;
+    wchar_t why[128] = L"";
+    if (!copied) wcscpy_s(why, 128, L"no files");
+    else
+    {
+        wchar_t tar[MAX_PATH], cmd[4096];
+        GetSystemDirectoryW(tar, MAX_PATH);
+        wcscat_s(tar, MAX_PATH, L"\\tar.exe");
+        swprintf_s(cmd, 4096, L"\"%ls\" -a -c -f \"%ls\" -C \"%ls\"%ls", tar, zip, stage, names.c_str());
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi = {};
+        if (CreateProcessW(tar, cmd, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, stage, &si, &pi))
+        {
+            DWORD code = 1;
+            if (WaitForSingleObject(pi.hProcess, 120000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+            else TerminateProcess(pi.hProcess, 1);
+            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+            ok = code == 0 && GetFileAttributesW(zip) != INVALID_FILE_ATTRIBUTES;
+            if (!ok) swprintf_s(why, 128, L"tar %lu", code);
+        }
+        else swprintf_s(why, 128, L"tar.exe: %lu", GetLastError());
+    }
+    ReportRemoveDir(stage);
+    if (ok)
+    {
+        LogPrintf(T(S_REPORT_OK), zip);
+        wchar_t cmd[MAX_PATH + 32];
+        swprintf_s(cmd, MAX_PATH + 32, L"explorer.exe /select,\"%ls\"", zip);
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi = {};
+        if (CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+    }
+    else
+    {
+        DeleteFileW(zip);
+        LogPrintf(T(S_REPORT_FAIL), why);
+    }
+    InterlockedExchange(&g_reportBusy, 0);
+    return 0;
+}
+
+static void StartReport(const wchar_t *gameDir)
+{
+    if (InterlockedExchange(&g_reportBusy, 1)) return;
+    wchar_t *arg = _wcsdup(gameDir ? gameDir : L"");
+    HANDLE h = arg ? CreateThread(nullptr, 0, ReportThread, arg, 0, nullptr) : nullptr;
+    if (h) CloseHandle(h);
+    else { free(arg); InterlockedExchange(&g_reportBusy, 0); }
+}
 
 // Game languages (names in their own language) and the locale passed to the game.
 static const wchar_t *kGameLangNames[] = { L"English", L"Português (Brasil)", L"Español", L"Français", L"Deutsch", L"Italiano", L"Polski" };
@@ -428,13 +564,14 @@ static void LayoutAdvanced(HWND hwnd)
 {
     ShowWindow(g_hD3DDebugChk, g_showAdvanced ? SW_SHOW : SW_HIDE);
     ShowWindow(g_hVerboseChk, g_showAdvanced ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_hGfxDiagChk, g_showAdvanced ? SW_SHOW : SW_HIDE);
     InvalidateRect(g_hAdvBtn, nullptr, TRUE);
 }
 
 static void LayoutLog(HWND hwnd)
 {
     int sw = g_showLog ? SW_SHOW : SW_HIDE;
-    ShowWindow(g_hLogEdit, sw); ShowWindow(g_hClearLogBtn, sw); ShowWindow(g_hCopyLogBtn, sw);
+    ShowWindow(g_hLogEdit, sw); ShowWindow(g_hClearLogBtn, sw); ShowWindow(g_hCopyLogBtn, sw); ShowWindow(g_hReportBtn, sw);
     SetWindowTextW(g_hLogBtn, g_showLog ? T(S_HIDELOG) : T(S_SHOWLOG));
     RECT rc = { 0, 0, UI_HERO_W, UI_H };
     InvalidateRect(hwnd, &rc, FALSE);
@@ -588,12 +725,12 @@ static void DrawOwnerButton(const DRAWITEMSTRUCT *di)
         }
         return;
     }
-    bool isToggle = (id == ID_PL_ENABLE || id == ID_PL_SHUFFLE || id == ID_VSYNC_CHK || id == ID_DISCORD_CHK || id == ID_D3DDEBUG_CHK || id == ID_VERBOSE_CHK || id == ID_SKIPINTRO_CHK || id == ID_BTN_ADVANCED || id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL || id == ID_MINIMIZE_CHK);
+    bool isToggle = (id == ID_PL_ENABLE || id == ID_PL_SHUFFLE || id == ID_VSYNC_CHK || id == ID_DISCORD_CHK || id == ID_D3DDEBUG_CHK || id == ID_VERBOSE_CHK || id == ID_GFXDIAG_CHK || id == ID_SKIPINTRO_CHK || id == ID_BTN_ADVANCED || id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL || id == ID_MINIMIZE_CHK);
     if (isToggle)
     {
         bool on = id == ID_PL_ENABLE ? g_config.musicEnabled != 0 : id == ID_PL_SHUFFLE ? g_config.musicShuffle != 0 :
                   id == ID_VSYNC_CHK ? g_vsyncOn : id == ID_DISCORD_CHK ? g_discordOn : id == ID_D3DDEBUG_CHK ? g_d3dDebugOn :
-                  id == ID_VERBOSE_CHK ? g_verboseOn : id == ID_SKIPINTRO_CHK ? g_skipIntroOn : id == ID_MINIMIZE_CHK ? g_minimizeOn : (id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL) ? ProfUnlockSwitchOn(id) : g_showAdvanced;
+                  id == ID_VERBOSE_CHK ? g_verboseOn : id == ID_GFXDIAG_CHK ? g_gfxDiagOn : id == ID_SKIPINTRO_CHK ? g_skipIntroOn : id == ID_MINIMIZE_CHK ? g_minimizeOn : (id == ID_PROF_UNLOCK || id == ID_PROF_UNLOCKALL) ? ProfUnlockSwitchOn(id) : g_showAdvanced;
         if (id == ID_BTN_ADVANCED)
         {   // disclosure row
             SelectObject(hdc, g_hFontUI);
@@ -733,6 +870,7 @@ static void ReadUiIntoConfig()
     g_config.vsync = g_vsyncOn ? 1 : 0;
     g_config.d3d12Debug = g_d3dDebugOn ? 1 : 0;
     g_config.verboseLog = g_verboseOn ? 1 : 0;
+    g_config.gfxDiag = g_gfxDiagOn ? 1 : 0;
     g_config.skipIntro = g_skipIntroOn ? 1 : 0;
     g_config.minimizeOnPlay = g_minimizeOn ? 1 : 0;
     GfxReadIntoConfig();
@@ -803,10 +941,12 @@ static void ApplyUiLanguage(HWND hwnd)
     SetWindowTextW(g_hAdvBtn, T(S_ADV));
     SetWindowTextW(g_hD3DDebugChk, T(S_D3DDBG));
     SetWindowTextW(g_hVerboseChk, T(S_VERBOSE));
+    SetWindowTextW(g_hGfxDiagChk, T(S_GFXDIAG));
     SetWindowTextW(g_hBtnOpenGame, T(S_BTN_GAME));
     SetWindowTextW(g_hBtnOpenSave, T(S_BTN_SAVES));
     SetWindowTextW(g_hClearLogBtn, T(S_CLEAR));
     SetWindowTextW(g_hCopyLogBtn, T(S_COPY));
+    SetWindowTextW(g_hReportBtn, T(S_REPORT));
     SetWindowTextW(g_hLogBtn, g_showLog ? T(S_HIDELOG) : T(S_SHOWLOG));
     SetWindowTextW(g_hBtnLaunch, !IsWindowEnabled(g_hBtnLaunch) ? T(S_PREP) : g_gameRunning ? T(S_CLOSE) : T(S_PLAY));
     if (g_hTabSettings) PlApplyLanguage();
@@ -902,7 +1042,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         GetEffectiveGameDir(&g_config, initialGameDir, MAX_PATH);
         if (g_config.gamePath[0] == L'\0') wcscpy_s(g_config.gamePath, MAX_PATH, initialGameDir);
         LoadDiscordIni();
-        g_vsyncOn = g_config.vsync != 0; g_d3dDebugOn = g_config.d3d12Debug != 0; g_verboseOn = g_config.verboseLog != 0; g_skipIntroOn = g_config.skipIntro != 0;
+        g_vsyncOn = g_config.vsync != 0; g_d3dDebugOn = g_config.d3d12Debug != 0; g_verboseOn = g_config.verboseLog != 0; g_gfxDiagOn = g_config.gfxDiag != 0; g_skipIntroOn = g_config.skipIntro != 0;
         g_minimizeOn = g_config.minimizeOnPlay != 0;
 
         g_uiLang = 0;
@@ -948,6 +1088,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_hAdvBtn = CreateWindowW(L"BUTTON", L"", od, X, 450, W, 24, hwnd, (HMENU)ID_BTN_ADVANCED, nullptr, nullptr);
         g_hD3DDebugChk = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, X, 476, W, 24, hwnd, (HMENU)ID_D3DDEBUG_CHK, nullptr, nullptr);
         g_hVerboseChk = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, X, 502, W, 24, hwnd, (HMENU)ID_VERBOSE_CHK, nullptr, nullptr);
+        g_hGfxDiagChk = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, X, 528, W, 24, hwnd, (HMENU)ID_GFXDIAG_CHK, nullptr, nullptr);
 
         g_hBtnLaunch = CreateWindowW(L"BUTTON", L"", od, X, UI_H - 112, W, 56, hwnd, (HMENU)ID_BTN_LAUNCH, nullptr, nullptr);
         int bw = (W - 16) / 3;
@@ -961,6 +1102,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         SetWindowTheme(g_hLogEdit, g_pal.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
         g_hClearLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 232, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_CLEAR_LOG, nullptr, nullptr);
         g_hCopyLogBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 330, UI_H - 56, 90, 30, hwnd, (HMENU)ID_BTN_COPY_LOG, nullptr, nullptr);
+        g_hReportBtn = CreateWindowW(L"BUTTON", L"", od & ~WS_VISIBLE, 428, UI_H - 56, 140, 30, hwnd, (HMENU)ID_BTN_REPORT, nullptr, nullptr);
         g_hBtnKill = nullptr;
         g_hBtnUpdate = CreateWindowW(L"BUTTON", L"", od, 16, UI_H - 48, 184, 30, hwnd, (HMENU)ID_BTN_UPDATE, nullptr, nullptr);
         PlCreateControls(hwnd);
@@ -1288,6 +1430,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             return 0;
         case ID_D3DDEBUG_CHK: g_d3dDebugOn = !g_d3dDebugOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_VERBOSE_CHK: g_verboseOn = !g_verboseOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
+        case ID_GFXDIAG_CHK: g_gfxDiagOn = !g_gfxDiagOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_SKIPINTRO_CHK: g_skipIntroOn = !g_skipIntroOn; InvalidateRect((HWND)lParam, nullptr, TRUE); return 0;
         case ID_MINIMIZE_CHK: g_minimizeOn = !g_minimizeOn; InvalidateRect((HWND)lParam, nullptr, TRUE); ReadUiIntoConfig(); SaveIni(); return 0;
         case ID_THEME_COMBO:
@@ -1312,6 +1455,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case ID_BTN_ADVANCED: g_showAdvanced = !g_showAdvanced; LayoutAdvanced(hwnd); return 0;
         case ID_BTN_SHOW_LOG: if (g_tab != 0) PlSetTab(hwnd, 0); g_showLog = !g_showLog; LayoutLog(hwnd); return 0;
         case ID_BTN_CLEAR_LOG: SetWindowTextW(g_hLogEdit, L""); return 0;
+        case ID_BTN_REPORT: RefreshGameDirStatus(hwnd); StartReport(g_gameDirShown); return 0;
         case ID_BTN_COPY_LOG:
         {
             int len = GetWindowTextLengthW(g_hLogEdit);

@@ -8644,7 +8644,7 @@ static void EnsureCtrBuf(ID3D12Device* dev) {
   dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COMMON, nullptr, __uuidof(ID3D12Resource), (void**)&g_CtrBuf);
   log_line("[ctr] counter buffer %p va=%llX\r\n", (void*)g_CtrBuf, g_CtrBuf ? (unsigned long long)g_CtrBuf->GetGPUVirtualAddress() : 0ull);
 }
-static void RecordRsCbvSlots(void* rs, const D3D12_ROOT_SIGNATURE_DESC* d);
+static void RecordRsCbvSlots(void* rs, const D3D12_ROOT_SIGNATURE_DESC* d); static void Diag_RecordRs(void* rs, const D3D12_ROOT_SIGNATURE_DESC* d);
 static HRESULT STDMETHODCALLTYPE HookedCreateRootSignature(ID3D12Device *dev, UINT nodeMask, const void *blob, SIZE_T len, REFIID riid, void **ppv) {
   static const bool s_off = GetEnvironmentVariableA("ONRUSH_NO_CTR_PARAM", nullptr, 0) > 0;
   if (!s_off && blob && len) {
@@ -8662,7 +8662,7 @@ static HRESULT STDMETHODCALLTYPE HookedCreateRootSignature(ID3D12Device *dev, UI
         ID3DBlob* out = nullptr; ID3DBlob* err = nullptr;
         if (SUCCEEDED(pSer(&nd, D3D_ROOT_SIGNATURE_VERSION_1, &out, &err)) && out) {
           HRESULT hr = CreateRootSignatureNoted(dev, nodeMask, out->GetBufferPointer(), out->GetBufferSize(), riid, ppv);
-          if (SUCCEEDED(hr) && ppv && *ppv) { AcquireSRWLockExclusive(&g_RsLock); g_RsExtraParam[*ppv] = d->NumParameters; ReleaseSRWLockExclusive(&g_RsLock); EnsureCtrBuf(dev); RecordRsCbvSlots(*ppv, d);
+          if (SUCCEEDED(hr) && ppv && *ppv) { AcquireSRWLockExclusive(&g_RsLock); g_RsExtraParam[*ppv] = d->NumParameters; ReleaseSRWLockExclusive(&g_RsLock); EnsureCtrBuf(dev); RecordRsCbvSlots(*ppv, d); Diag_RecordRs(*ppv, d);
             static volatile LONG s_n = 0; if (InterlockedIncrement(&s_n) <= 10) log_line("[ctr] root signature %p extended: counter UAV at param %u\r\n", *ppv, d->NumParameters); }
           out->Release(); if (err) err->Release(); des->Release();
           if (SUCCEEDED(hr)) return hr;
@@ -9762,6 +9762,7 @@ static void LogCbvDumpImpl(const D3D12_GPU_VIRTUAL_ADDRESS* cbv) {
 }
 static struct CbvDumpInit { CbvDumpInit() { g_pfnLogCbvDump = LogCbvDumpImpl; } } g_cbvDumpInit;
 #include "upscaler.inc"
+#include "diag.inc"
 
 typedef void(STDMETHODCALLTYPE *PFN_ExecuteCommandLists)(
     ID3D12CommandQueue *pQueue, UINT NumCommandLists,
@@ -12287,6 +12288,7 @@ EXTERN_C HRESULT WINAPI OnRushDXGIXPresentArray(
   g_lastPresentTick = GetTickCount64();
   BcArgDumpTick((long)frame_count);
   g_rtLogFrame = (LONG)frame_count;
+  Diag_OnPresent((LONG)frame_count);
   DeferReleaseTick();
   MemScanTick(frame_count);
   { static bool s_wd = false; if (!s_wd) { s_wd = true; if (GetEnvironmentVariableA("ONRUSH_NO_HANG_DUMP", nullptr, 0) == 0) CloseHandle(CreateThread(nullptr, 0, HangWatchdogThread, nullptr, 0, nullptr)); } }

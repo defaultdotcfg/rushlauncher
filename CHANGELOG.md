@@ -2,6 +2,10 @@
 
 ## Próxima versão
 
+### Novidades
+- Botão "Gerar relatório" na tela de log: junta os logs, as configurações e as últimas capturas (F11) num único arquivo .zip para enviar junto com um problema.
+- Opção "Diagnóstico gráfico" nas configurações avançadas: mede a imagem durante a corrida e anota no log em qual etapa do desenho um defeito aparece (por exemplo, tela branca ou pontos pretos). Serve para encontrar problemas que só acontecem em algumas placas de vídeo.
+
 ### Correções
 - O jogo pode ser capturado com o RenderDoc (ferramenta de depuração gráfica). Antes, ele fechava logo ao abrir. O launcher apaga da pasta do jogo um arquivo do console que não é mais usado e causava isso.
 

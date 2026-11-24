@@ -333,9 +333,11 @@ static inline void CountRtDraw(ID3D12Resource* rt)
     }
 }
 
+static void Diag_BeforeRtChange(BridgeCommandList* self); static void Diag_OnDraw(BridgeCommandList* self); static void Diag_AfterDispatch(BridgeCommandList* self);   // diag.inc
 static HRESULT STDMETHODCALLTYPE BridgeCmdList_Close(BridgeCommandList* self)
 {
     if (!self || !self->m_pRealCmdList) return E_POINTER;
+    Diag_BeforeRtChange(self);
     HRESULT hr = self->m_pRealCmdList->Close();
     if (SUCCEEDED(hr)) {
         self->m_isClosed = true;
@@ -481,6 +483,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_DrawInstanced(
         self->m_pRealCmdList->DrawInstanced(
             VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
         BcEnd(self, bc);
+        Diag_OnDraw(self);
     }
 }
 
@@ -519,6 +522,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_DrawIndexedInstanced(
         self->m_pRealCmdList->DrawIndexedInstanced(
             IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
         BcEnd(self, bc);
+        Diag_OnDraw(self);
     }
 }
 
@@ -802,6 +806,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_Dispatch(
         log_line("[disp] pso=%p groups=%u,%u,%u\r\n", t_lastPso, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
     if (self && self->m_pRealCmdList && Upscaler_OnDispatch(self, ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ)) {
         if (tsIdx >= 0) { tsCl->EndQuery(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * tsIdx + 1)); tsCl->ResolveQueryData(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * tsIdx), 2, g_tsReadback, (UINT64)(2 * tsIdx) * 8); }
+        Diag_AfterDispatch(self);
         return;
     }
     if (self && self->m_pRealCmdList)
@@ -810,6 +815,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_Dispatch(
         self->m_pRealCmdList->Dispatch(
             ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
         BcEnd(self, bc);
+        Diag_AfterDispatch(self);
     }
     if (tsIdx >= 0) { tsCl->EndQuery(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * tsIdx + 1)); tsCl->ResolveQueryData(g_tsHeap, D3D12_QUERY_TYPE_TIMESTAMP, (UINT)(2 * tsIdx), 2, g_tsReadback, (UINT64)(2 * tsIdx) * 8); }
 }
@@ -1656,6 +1662,7 @@ static void STDMETHODCALLTYPE BridgeCmdList_OMSetRenderTargets(
     BOOL RTsSingleHandleToDescriptorRange, const D3D12_CPU_DESCRIPTOR_HANDLE* pDepthStencilDescriptor)
 {
     if (!self || !self->m_pRealCmdList) return;
+    Diag_BeforeRtChange(self);
 
     if (NumRenderTargetDescriptors > 0) {
         if (!pRenderTargetDescriptors || (uintptr_t)pRenderTargetDescriptors <= 0x10000) {

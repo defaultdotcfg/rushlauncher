@@ -541,7 +541,7 @@ static void PlUpdateVisibility(HWND hwnd)
     ShowWindow(g_hLogBtn, SW_SHOW);
     ShowWindow(g_hUiLangCombo, SW_SHOW);
     ShowWindow(g_hBtnUpdate, SW_SHOW);
-    HWND adv[] = { g_hD3DDebugChk, g_hVerboseChk };
+    HWND adv[] = { g_hD3DDebugChk, g_hVerboseChk, g_hGfxDiagChk };
     for (HWND h : adv) if (h) ShowWindow(h, settingsPage && g_showAdvanced ? SW_SHOW : SW_HIDE);
     HWND plc[] = { g_hPlNew, g_hPlRename, g_hPlDelete, g_hPlEnable, g_hPlShuffle, g_hPlAddFiles, g_hPlAddFolder,
                    g_hPlSearch, g_hPlRemove };

@@ -116,6 +116,7 @@ struct LauncherConfig
     int diagnostics;
     int verboseLog;
     int d3d12Debug;
+    int gfxDiag;         // graphics diagnostic: per-pass NaN/brightness measurements in the bridge log (ini [Graphics] GfxDiag)
     int autoRestart;
     int skipIntro;       // skip the legal-screen minimum time and the Codemasters/intro video (boots to the title)
     wchar_t uiLang[8];     // launcher language: pt, en, es
@@ -196,6 +197,7 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     cfg->diagnostics = 1;
     cfg->verboseLog = 0;  // debug mode: full logs + frame captures (ini key DebugMode)
     cfg->d3d12Debug = 0;
+    cfg->gfxDiag = 0;
     cfg->autoRestart = 0;
     cfg->skipIntro = 0;
     wcscpy_s(cfg->uiLang, 8, L"pt");
@@ -253,6 +255,7 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     cfg->diagnostics = GetPrivateProfileIntW(L"System", L"Diagnostics", cfg->diagnostics, iniPath);
     cfg->verboseLog = GetPrivateProfileIntW(L"System", L"DebugMode", cfg->verboseLog, iniPath);
     cfg->d3d12Debug = GetPrivateProfileIntW(L"Graphics", L"D3D12Debug", cfg->d3d12Debug, iniPath);
+    cfg->gfxDiag = GetPrivateProfileIntW(L"Graphics", L"GfxDiag", cfg->gfxDiag, iniPath);
     cfg->skipIntro = GetPrivateProfileIntW(L"System", L"SkipIntro", cfg->skipIntro, iniPath);
     cfg->autoRestart = GetPrivateProfileIntW(L"System", L"AutoRestart", cfg->autoRestart, iniPath);
     GetPrivateProfileStringW(L"Language", L"Launcher", cfg->uiLang, cfg->uiLang, 8, iniPath);
@@ -310,6 +313,8 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
 
     swprintf_s(buf, 64, L"%d", cfg->d3d12Debug);
     WritePrivateProfileStringW(L"Graphics", L"D3D12Debug", buf, iniPath);
+    swprintf_s(buf, 64, L"%d", cfg->gfxDiag);
+    WritePrivateProfileStringW(L"Graphics", L"GfxDiag", buf, iniPath);
     WritePrivateProfileStringW(L"System", L"QuickGameplay", nullptr, iniPath);  // option removed: drop the old key
     swprintf_s(buf, 64, L"%d", cfg->skipIntro);
     WritePrivateProfileStringW(L"System", L"SkipIntro", buf, iniPath);
@@ -509,6 +514,7 @@ static void KbSetGameEnv();                          // controls_ui.inc
 // [Player] SwitchTo and ends with this exit code; the launcher then starts it again with that profile.
 static const DWORD kExitProfileSwitch = 0x52530050;
 static volatile bool g_profileSwitchLaunch = false;  // this start follows a switch: skip the intro, show the notice
+
 // Launchers up to v0.3.0 copied the console's D3DCompiler_47.dll next to the game. Nothing uses it (the
 // bridge loads the Windows one), but being in the game folder it wins the DLL search for anything loading
 // it by name: RenderDoc then fails to build its shaders and the game crashes under capture. Removed only
@@ -572,6 +578,7 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
 
     swprintf_s(envBuf, 64, L"%d", cfg->d3d12Debug);
     SetEnvironmentVariableW(L"ONRUSH_D3D12_DEBUG", envBuf);
+    SetEnvironmentVariableW(L"ONRUSH_GFX_DIAG", cfg->gfxDiag ? L"1" : nullptr);
     // debug mode: full bridge log + periodic frame_*.bmp captures in the game folder
     g_debugMode = cfg->verboseLog != 0;
     g_firstChanceLogged = 0;
