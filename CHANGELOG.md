@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.2 — diagnóstico gráfico mais completo
+
+**Como atualizar:** o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.
+
+### Novidades
+- O "Diagnóstico gráfico" também anota no log os valores de luz ambiente e exposição de cada quadro medido, para encontrar a causa da tela branca em algumas placas AMD.
+
 ## v0.3.1 — diagnóstico gráfico e relatório de problemas
 
 **Como atualizar:** o próprio launcher oferece a atualização. Também dá para descompactar este zip por cima da pasta atual.
