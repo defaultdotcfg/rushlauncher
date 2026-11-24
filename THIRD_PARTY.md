@@ -5,7 +5,14 @@
 | `src/d3d12_x`, `src/MMDevAPI` | [WinDurango](https://github.com/WinDurango/WinDurango) (D3D12X, MMDevAPI) | LGPL-3.0 | `licenses/WinDurango-LGPL-3.0.txt` |
 | `src/kernelx`, `src/combase`, `src/EtwPlus` | SlimEra by XWine1 (ERA kernelx, incl. `MapTitleEsramPages`) | MIT, Copyright (c) 2025 XWine1 | `licenses/SlimEra-MIT.txt` |
 
-`d3d12_x.dll` also links, unmodified, [AMD FidelityFX Super Resolution 2](https://github.com/GPUOpen-Effects/FidelityFX-FSR2) 2.2.1 (the FSR 2 upscaler option; source downloaded and built by `scripts/build_fsr2.ps1`): MIT, Copyright (c) 2022-2023 Advanced Micro Devices, Inc., `licenses/FidelityFX-FSR2-MIT.txt`.
+The upscaler options use the vendors' own libraries. None of their files is kept in this repository: `scripts/fetch_upscalers.ps1` downloads them from the official repositories at a fixed version (checked by hash) when building, and the release zip ships the runtime DLLs, unmodified, next to the port's:
+
+| Component | Files in the release | License |
+|---|---|---|
+| [AMD FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) 2.4.0 (FSR 3.1 / FSR 4) | `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll` (signed binaries); `d3d12_x.dll` uses only its API headers and loads the DLLs at run time | AMD FidelityFX SDK license, Copyright (C) Advanced Micro Devices, Inc., `licenses/AMD-FidelityFX-SDK-LICENSE.md` |
+| [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS) 310.9.16 | `nvngx_dlss.dll`; `rl_dlss.dll` links the SDK's NGX library | NVIDIA RTX SDKs License, `licenses/NVIDIA-RTX-SDKs-LICENSE.txt` |
+
+The NVIDIA SDK is proprietary, so it is kept out of the GPL code: it is linked only into `rl_dlss.dll` (`src/rl_dlss`, a small module written for this project), which `d3d12_x.dll` loads at run time when present; without it DLSS is simply unavailable. `rl_dlss.dll` contains source code provided by NVIDIA Corporation (the NGX helper functions).
 
 The release zip also bundles, unmodified, in `translator\`:
 

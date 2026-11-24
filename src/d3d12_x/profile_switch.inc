@@ -51,8 +51,9 @@ static void __cdecl Chosen(void *, void *, int button) {
 }
 
 static void OpenPicker() {
-  log_line("[profile] change user chosen (launcher %s)\r\n", IsDebuggerPresent() ? "present" : "absent");
-  if (!IsDebuggerPresent()) {  // RushLauncher runs the game under its debug loop
+  const bool launcher = GetEnvironmentVariableW(L"ONRUSH_LAUNCHER", nullptr, 0) > 0;   // set by RushLauncher
+  log_line("[profile] change user chosen (launcher %s)\r\n", launcher ? "present" : "absent");
+  if (!launcher) {
     lang::ShowNotice("ID_CHANGE_USER", "ID_RL_PROF_NOLAUNCHER");
     return;
   }

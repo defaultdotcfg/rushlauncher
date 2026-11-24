@@ -36,7 +36,8 @@ foreach ($f in "AcpHal.dll", "ACP_kernel.bin", "xg_x.dll", "xaudio2_9.dll", "D3D
     if (Test-Path "$sys32\$f") { Copy-Item "$sys32\$f" $Destination -Force; Write-Host "  system library: $f" }
 }
 # 3. port binaries
-foreach ($f in "kernelx.dll", "combase.dll", "EtwPlus.dll", "MMDevAPI.dll", "d3d12_x.dll", "RushLauncher.exe") {
+foreach ($f in "kernelx.dll", "combase.dll", "EtwPlus.dll", "MMDevAPI.dll", "d3d12_x.dll", "RushLauncher.exe",
+               "rl_dlss.dll", "nvngx_dlss.dll", "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll") {
     if (Test-Path "$BinDir\$f") { Copy-Item "$BinDir\$f" $Destination -Force; Write-Host "  port: $f" -ForegroundColor Green }
 }
 # 4. large asset folders as junctions (nothing is copied)

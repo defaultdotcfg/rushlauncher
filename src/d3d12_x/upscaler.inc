@@ -1,21 +1,30 @@
 // ---------------------------------------------------------------------------
-// Upscaler: AMD FidelityFX Super Resolution 2 in place of the game's temporal pass.
+// Upscaler: AMD FidelityFX Super Resolution (3.1, or 4 on GPUs that run it) or NVIDIA DLSS Super Resolution in
+// place of the game's temporal pass.
 //
 // The game's TAA is the compute shader 83717de270dda518 ("history:UpdateHistoryBuffer"), one dispatch per
 // frame at output resolution that resolves the render-resolution scene into AccumHistoryA/B (ping-pong). It also
 // writes a display-resolution depth and a history weight that later passes read, so it keeps running; after it:
 //   1. a small compute pass that turns the game's depth + per-object world-space motion into the screen-space
-//      motion vectors FSR2 needs (same reconstruction as the game's shader, from its camera constants);
-//   2. the FSR2 dispatch (scene colour, depth, motion vectors, the game's own jitter for this frame);
+//      motion vectors the upscalers need (same reconstruction as the game's shader, from its camera constants);
+//   2. the upscaler (scene colour, depth, motion vectors, the game's own jitter for this frame);
 //   3. a copy of the result into both history buffers (the passes after the TAA read one of them).
 // Everything is recorded on the game's command list, then the game's compute state is put back.
+//
+// FSR: AMD's signed amd_fidelityfx_loader_dx12.dll + amd_fidelityfx_upscaler_dx12.dll (FidelityFX SDK 2.4),
+// loaded at run time; the upscaler DLL picks FSR 4 on the GPUs that support it and FSR 3.1 elsewhere.
+// DLSS: rl_dlss.dll (src/rl_dlss, the NVIDIA NGX SDK lives there) + NVIDIA's nvngx_dlss.dll; without them, or
+// without an RTX GPU, the DLSS choice runs FSR and the menu says DLSS is not supported.
 //
 // Bindings of the TAA dispatch (game root signature): table param 1 = [CB camera][t0 depth][..][t6 colour]
 // [t7 world motion][t8/t9 history]; the jitter index is (TAA object +0x60) & 7 into the game's 8-entry table.
 // Included by onrush_d3d12_x.cpp after bridge_cmdlist.h.
 // ---------------------------------------------------------------------------
-#include "ffx_fsr2.h"
-#include "dx12/ffx_fsr2_dx12.h"
+#include <tlhelp32.h>
+#include "ffx_api.h"
+#include "dx12/ffx_api_dx12.h"
+#include "ffx_upscale.h"
+#include "../rl_dlss/rl_dlss.h"
 
 namespace ups {
 
@@ -32,34 +41,212 @@ static bool IsTaa() {
   return s_is;
 }
 
-// 0 = the game's TAA, 1 = FSR2: the GRAPHICS > UPSCALER row (onrush.ini [Graphics] Upscaler, ONRUSH_UPSCALER).
-static int Mode() { return gfxopt::g_upscaler ? 1 : 0; }
-
-// ---- A device that calls the real D3D12 functions directly. The bridge wraps the device's vtable to
-// translate the game's Xbox-specific calls; FSR2 and our own pass must not go through that.
+// ---- A device that calls the real D3D12 functions directly. The bridge gives the game's device an Xbox-layout
+// vtable (different slots from slot 44 on); FSR, DLSS and our own pass must see the desktop interface. Every slot
+// forwards to the driver's function with the real device; QueryInterface hands out this proxy again whenever
+// the driver would return the device itself (ID3D12Device1..N), so later calls stay on desktop slots too.
 struct ProxyDevice { void** vtbl; ID3D12Device* real; };
 static ProxyDevice g_proxy = {};
+typedef HRESULT(STDMETHODCALLTYPE* PFN_QI)(void*, REFIID, void**);
+static HRESULT STDMETHODCALLTYPE ProxyQueryInterface(ProxyDevice* self, REFIID riid, void** ppv) {
+  HRESULT hr = ((PFN_QI)psodc::g_origDevVtbl[0])(self->real, riid, ppv);
+  if (SUCCEEDED(hr) && ppv && *ppv == (void*)self->real) *ppv = self;
+  return hr;
+}
 static ID3D12Device* Dev() {
   if (g_proxy.vtbl) return (ID3D12Device*)&g_proxy;
   void** orig = psodc::g_origDevVtbl;
   if (!orig || !g_pMainDevice) return nullptr;
-  const int kSlots = 128;
+  const int kSlots = 160;
   uint8_t* code = (uint8_t*)AllocateNearAddress((void*)&Dev, kSlots * 16 + kSlots * sizeof(void*));
   DWORD old = 0;
   if (!code || !VirtualProtect(code, kSlots * 16 + kSlots * sizeof(void*), PAGE_EXECUTE_READWRITE, &old)) return nullptr;
   void** vt = (void**)(code + kSlots * 16);
+  bool end = false;
   for (int i = 0; i < kSlots; ++i) {
     uint8_t* q = code + i * 16;
     MEMORY_BASIC_INFORMATION mbi = {};
-    const bool valid = VirtualQuery(orig[i], &mbi, sizeof(mbi)) && (mbi.Protect == PAGE_EXECUTE_READ || mbi.Protect == PAGE_EXECUTE_READWRITE);
+    const bool valid = !end && VirtualQuery(orig[i], &mbi, sizeof(mbi)) && (mbi.Protect == PAGE_EXECUTE_READ || mbi.Protect == PAGE_EXECUTE_READWRITE);
+    if (!valid) end = true;   // the vtable ends at the first entry that is not code
     // mov rcx, [rcx+8] ; mov rax, imm64 ; jmp rax  (this -> real device, then the driver's function)
     q[0] = 0x48; q[1] = 0x8B; q[2] = 0x49; q[3] = 0x08; q[4] = 0x48; q[5] = 0xB8;
     void* f = valid ? orig[i] : nullptr; memcpy(q + 6, &f, 8); q[14] = 0xFF; q[15] = 0xE0;
     vt[i] = valid ? (void*)q : nullptr;
   }
+  vt[0] = (void*)&ProxyQueryInterface;
   FlushInstructionCache(GetCurrentProcess(), code, kSlots * 16);
   g_proxy.real = g_pMainDevice; g_proxy.vtbl = vt;
   return (ID3D12Device*)&g_proxy;
+}
+
+static const wchar_t* ModuleDir() {
+  static wchar_t s_dir[MAX_PATH] = {};
+  if (!s_dir[0]) {
+    HMODULE m = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&ModuleDir, &m);
+    DWORD n = GetModuleFileNameW(m, s_dir, MAX_PATH);
+    while (n && s_dir[n - 1] != L'\\' && s_dir[n - 1] != L'/') --n;
+    s_dir[n ? n - 1 : 0] = 0;
+  }
+  return s_dir;
+}
+static HMODULE LoadBeside(const wchar_t* name) {
+  wchar_t p[MAX_PATH]; swprintf_s(p, L"%s\\%s", ModuleDir(), name);
+  return LoadLibraryExW(p, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+// ---- The game's device keeps the bridge's Xbox-layout vtable, and D3D12 hands that same object back to anyone
+// who asks a resource or command list for its device. The upscaler libraries do, and their desktop calls would
+// then land in the Xbox translations (GetResourceAllocationInfo crashed inside FSR's context creation, and from
+// slot 44 on the layouts differ). So every translated slot gets a small router: a caller inside the game's own
+// modules (the exe and the DLLs in its folder: the Xbox code and this bridge) reaches the translation, any
+// other caller (system, driver, AMD and NVIDIA libraries) the real D3D12 function.
+struct Range { uintptr_t lo, hi; };
+static Range g_xboxCallers[40] = {};   // ends at lo == 0
+
+static bool IsVendorDll(const wchar_t* name) {
+  return _wcsnicmp(name, L"amd_fidelityfx", 14) == 0 || _wcsnicmp(name, L"nvngx", 5) == 0 || _wcsicmp(name, L"rl_dlss.dll") == 0;
+}
+
+static void RouteForeignDeviceCalls() {
+  void** orig = psodc::g_origDevVtbl;
+  if (!orig) return;
+  // the modules that call the device with the Xbox layout: everything loaded from the game's folder
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
+  if (snap == INVALID_HANDLE_VALUE) { log_line("[ups] module list unavailable: device calls not routed\r\n"); return; }
+  const wchar_t* dir = ModuleDir(); const size_t dirLen = wcslen(dir);
+  int n = 0;
+  MODULEENTRY32W me = {}; me.dwSize = sizeof(me);
+  for (BOOL ok = Module32FirstW(snap, &me); ok && n < (int)_countof(g_xboxCallers) - 1; ok = Module32NextW(snap, &me)) {
+    if (_wcsnicmp(me.szExePath, dir, dirLen) != 0 || (me.szExePath[dirLen] != L'\\' && me.szExePath[dirLen] != L'/')) continue;
+    if (IsVendorDll(me.szModule)) continue;
+    g_xboxCallers[n].lo = (uintptr_t)me.modBaseAddr; g_xboxCallers[n].hi = (uintptr_t)me.modBaseAddr + me.modBaseSize; ++n;
+  }
+  CloseHandle(snap);
+  if (n == 0) { log_line("[ups] no game modules found: device calls not routed\r\n"); return; }
+  // only the slots the desktop device has (past its end the wrapped table holds Xbox-only entries)
+  int valid = 0;
+  for (; valid < 256; ++valid) {
+    MEMORY_BASIC_INFORMATION mbi = {};
+    if (!VirtualQuery(orig[valid], &mbi, sizeof(mbi)) || (mbi.Protect != PAGE_EXECUTE_READ && mbi.Protect != PAGE_EXECUTE_READWRITE)) break;
+  }
+  int slots = 0;
+  for (int i = 0; i < valid; ++i) if (g_WrappedDeviceVtable[i] != orig[i]) ++slots;
+  uint8_t* code = (uint8_t*)AllocateNearAddress((void*)&RouteForeignDeviceCalls, (size_t)slots * 64);
+  DWORD old = 0;
+  if (!code || !VirtualProtect(code, (size_t)slots * 64, PAGE_EXECUTE_READWRITE, &old)) { log_line("[ups] router memory failed\r\n"); return; }
+  uint8_t* q = code;
+  for (int i = 0; i < valid; ++i) {
+    void* hook = g_WrappedDeviceVtable[i];
+    if (hook == orig[i]) continue;
+    // mov rax,[rsp] ; mov r10,&g_xboxCallers
+    // loop: mov r11,[r10] ; test r11,r11 ; jz desktop ; cmp rax,r11 ; jb next ; cmp rax,[r10+8] ; jb xbox
+    // next: add r10,16 ; jmp loop
+    // xbox: mov rax,hook ; jmp rax      desktop: mov rax,orig ; jmp rax
+    static const uint8_t k1[] = { 0x48, 0x8B, 0x04, 0x24, 0x49, 0xBA };
+    static const uint8_t k2[] = { 0x4D, 0x8B, 0x1A, 0x4D, 0x85, 0xDB, 0x74, 0x1D, 0x4C, 0x39, 0xD8, 0x72, 0x06, 0x49, 0x3B, 0x42, 0x08,
+                                  0x72, 0x06, 0x49, 0x83, 0xC2, 0x10, 0xEB, 0xE7 };
+    uint8_t* t = q;
+    memcpy(t, k1, sizeof(k1)); t += sizeof(k1);
+    void* tbl = (void*)g_xboxCallers; memcpy(t, &tbl, 8); t += 8;
+    memcpy(t, k2, sizeof(k2)); t += sizeof(k2);
+    *t++ = 0x48; *t++ = 0xB8; memcpy(t, &hook, 8); t += 8; *t++ = 0xFF; *t++ = 0xE0;
+    void* real = orig[i];
+    *t++ = 0x48; *t++ = 0xB8; memcpy(t, &real, 8); t += 8; *t++ = 0xFF; *t++ = 0xE0;
+    q += 64;
+  }
+  FlushInstructionCache(GetCurrentProcess(), code, (size_t)slots * 64);
+  q = code;
+  for (int i = 0; i < valid; ++i) {
+    if (g_WrappedDeviceVtable[i] == orig[i]) continue;
+    InterlockedExchangePointer(&g_WrappedDeviceVtable[i], q);
+    q += 64;
+  }
+  log_line("[ups] %d of %d device slots routed by caller (%d game modules)\r\n", slots, valid, n);
+}
+
+// ---- What this machine can run (checked once, the first time the menu or a frame needs it).
+struct Caps {
+  volatile LONG state = 0;   // 0 not checked, 1 checking, 2 done
+  // FSR
+  HMODULE ffxMod = nullptr;
+  struct { PfnFfxCreateContext CreateContext; PfnFfxDestroyContext DestroyContext; PfnFfxQuery Query; PfnFfxDispatch Dispatch; } ffx = {};
+  bool fsr = false; char fsrName[32] = "FSR 3.1";
+  // DLSS
+  HMODULE dlssMod = nullptr; PFN_RlDlssCreate dlssCreate = nullptr; PFN_RlDlssEvaluate dlssEval = nullptr; int dlss = 0;   // 1 available, -1 needs a newer driver
+};
+static Caps c;
+
+static void FfxMessage(uint32_t type, const wchar_t* msg) {
+  static volatile LONG s_n = 0; if (InterlockedIncrement(&s_n) <= 20) log_line("[ups] FSR %s: %ls\r\n", type == FFX_API_MESSAGE_TYPE_ERROR ? "error" : "warning", msg);
+}
+
+static void ProbeFsr(ID3D12Device* dev) {
+  c.ffxMod = LoadBeside(L"amd_fidelityfx_loader_dx12.dll");
+  if (!c.ffxMod) { log_line("[ups] amd_fidelityfx_loader_dx12.dll not found: FSR unavailable\r\n"); return; }
+  c.ffx.CreateContext = (PfnFfxCreateContext)GetProcAddress(c.ffxMod, "ffxCreateContext");
+  c.ffx.DestroyContext = (PfnFfxDestroyContext)GetProcAddress(c.ffxMod, "ffxDestroyContext");
+  c.ffx.Query = (PfnFfxQuery)GetProcAddress(c.ffxMod, "ffxQuery");
+  c.ffx.Dispatch = (PfnFfxDispatch)GetProcAddress(c.ffxMod, "ffxDispatch");
+  if (!c.ffx.CreateContext || !c.ffx.Dispatch || !c.ffx.Query || !c.ffx.DestroyContext) { log_line("[ups] FidelityFX loader without its functions\r\n"); return; }
+  // the versions the upscaler DLL offers on this GPU, newest (= the one used) first
+  uint64_t n = 8; uint64_t ids[8] = {}; const char* names[8] = {};
+  ffxQueryDescGetVersions q = {};
+  q.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS; q.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
+  q.device = dev; q.outputCount = &n; q.versionIds = ids; q.versionNames = names;
+  ffxReturnCode_t r = c.ffx.Query(nullptr, &q.header);
+  if (r != FFX_API_RETURN_OK || n == 0) { log_line("[ups] FSR: no upscaler version on this device (%u)\r\n", (unsigned)r); return; }
+  for (uint64_t i = 0; i < n && i < 8; ++i) log_line("[ups] FSR version %llu: %s\r\n", (unsigned long long)i, names[i] ? names[i] : "?");
+  // "4.0.2" -> "FSR 4", "3.1.5" -> "FSR 3.1"
+  const char* v = names[0] ? names[0] : "";
+  while (*v && (*v < '0' || *v > '9')) ++v;
+  if (*v == '4' || (*v >= '5' && *v <= '9')) sprintf_s(c.fsrName, "FSR %c", *v);
+  else if (*v) sprintf_s(c.fsrName, "FSR %c.%c", v[0], v[1] == '.' ? v[2] : '1');
+  c.fsr = true;
+}
+
+static void ProbeDlss(ID3D12Device* dev) {
+  c.dlssMod = LoadBeside(L"rl_dlss.dll");
+  if (!c.dlssMod) { log_line("[ups] rl_dlss.dll not found: DLSS unavailable\r\n"); return; }
+  auto ver = (PFN_RlDlssApiVersion)GetProcAddress(c.dlssMod, "RlDlssApiVersion");
+  auto init = (PFN_RlDlssInit)GetProcAddress(c.dlssMod, "RlDlssInit");
+  c.dlssCreate = (PFN_RlDlssCreate)GetProcAddress(c.dlssMod, "RlDlssCreate");
+  c.dlssEval = (PFN_RlDlssEvaluate)GetProcAddress(c.dlssMod, "RlDlssEvaluate");
+  if (!ver || ver() != RL_DLSS_API_VERSION || !init || !c.dlssCreate || !c.dlssEval) { log_line("[ups] rl_dlss.dll does not match this build\r\n"); return; }
+  // NVIDIA's NGX does not start in a process with a debugger attached (it waits forever): the launcher's debug
+  // option runs the game that way, so DLSS is off there instead of freezing the game
+  if (IsDebuggerPresent()) { log_line("[ups] DLSS unavailable while a debugger is attached (launcher debug mode)\r\n"); return; }
+  c.dlss = init(dev, ModuleDir(), ModuleDir());
+  log_line("[ups] DLSS %s\r\n", c.dlss == 1 ? "available" : c.dlss < 0 ? "needs a newer NVIDIA driver" : "not supported on this GPU");
+}
+
+static bool Probe() {
+  if (c.state == 2) return true;
+  ID3D12Device* dev = Dev();
+  if (!dev) return false;   // no device yet: ask again later
+  if (InterlockedCompareExchange(&c.state, 1, 0) != 0) {
+    while (c.state != 2) Sleep(1);   // another thread is checking
+    return true;
+  }
+  RouteForeignDeviceCalls();   // before any upscaler library is loaded
+  ProbeFsr(dev);
+  ProbeDlss(dev);
+  InterlockedExchange(&c.state, 2);
+  return true;
+}
+
+// Names for the GRAPHICS > UPSCALER row (gfx_options.inc).
+static const char* FsrName() { Probe(); return c.fsrName; }
+static bool DlssAvailable() { return !Probe() || c.dlss == 1; }   // before the device exists, show plain "DLSS"
+
+// 0 = the game's TAA, 1 = FSR, 2 = DLSS: the GRAPHICS > UPSCALER row (onrush.ini [Graphics] Upscaler, ONRUSH_UPSCALER).
+// DLSS falls back to FSR where it cannot run.
+static int Mode() {
+  const LONG want = gfxopt::g_upscaler;
+  if (want == 0 || !Probe()) return 0;
+  if (want == 2 && c.dlss == 1) return 2;
+  if (want == 2) { static volatile LONG s_w = 0; if (!InterlockedExchange(&s_w, 1)) log_line("[ups] DLSS chosen but not available: using FSR\r\n"); }
+  return c.fsr ? 1 : 0;
 }
 
 // ---- Motion vectors from depth + world-space object motion (the game's reconstruction).
@@ -95,11 +282,12 @@ struct Gpu {
   ID3D12DescriptorHeap* heap = nullptr; UINT inc = 0; UINT ring = 0;
   ID3D12Resource* mv = nullptr; UINT mvW = 0, mvH = 0;
   ID3D12Resource* out = nullptr; UINT outW = 0, outH = 0;
-  FfxFsr2Context ctx = {}; bool ctxOk = false; UINT ctxW = 0, ctxH = 0;
-  void* scratch = nullptr;
+  ffxContext fsr = nullptr; UINT fsrW = 0, fsrH = 0;                  // FSR context (display size)
+  bool dlssOk = false; UINT dlssRw = 0, dlssRh = 0, dlssW = 0, dlssH = 0;   // DLSS feature (render + display size)
   LARGE_INTEGER last = {};
   UINT frames = 0;
-  LONG lastFrame = -100;   // render frame of the previous FSR2 dispatch
+  int lastMode = 0;
+  LONG lastFrame = -100;   // render frame of the previous upscaler dispatch
 };
 static Gpu g;
 
@@ -123,11 +311,10 @@ static bool InitStatic() {
   D3D12_DESCRIPTOR_HEAP_DESC hd = {}; hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; hd.NumDescriptors = 3 * 16; hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&g.heap)))) { log_line("[ups] descriptor heap failed\r\n"); return false; }
   g.inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-  g.scratch = malloc(ffxFsr2GetScratchMemorySizeDX12());
   QueryPerformanceCounter(&g.last);
-  g.ok = g.scratch != nullptr;
-  log_line("[ups] FSR2 ready\r\n");
-  return g.ok;
+  g.ok = true;
+  log_line("[ups] upscaler pass ready\r\n");
+  return true;
 }
 
 static ID3D12Resource* MakeTex(UINT w, UINT h, DXGI_FORMAT f, D3D12_RESOURCE_STATES st) {
@@ -139,25 +326,42 @@ static ID3D12Resource* MakeTex(UINT w, UINT h, DXGI_FORMAT f, D3D12_RESOURCE_STA
   return r;
 }
 
-static bool EnsureSizes(UINT rw, UINT rh, UINT dw, UINT dh) {
+static bool EnsureTextures(UINT rw, UINT rh, UINT dw, UINT dh) {
   if (g.mv && (g.mvW != rw || g.mvH != rh)) { g.mv->Release(); g.mv = nullptr; }
   if (!g.mv) { g.mv = MakeTex(rw, rh, DXGI_FORMAT_R16G16_FLOAT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); g.mvW = rw; g.mvH = rh; }
   if (g.out && (g.outW != dw || g.outH != dh)) { g.out->Release(); g.out = nullptr; }
   if (!g.out) { g.out = MakeTex(dw, dh, DXGI_FORMAT_R11G11B10_FLOAT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS); g.outW = dw; g.outH = dh; }
-  if (g.ctxOk && (g.ctxW != dw || g.ctxH != dh)) { ffxFsr2ContextDestroy(&g.ctx); g.ctxOk = false; }
-  if (!g.ctxOk) {
-    FfxFsr2ContextDescription cd = {};
-    if (ffxFsr2GetInterfaceDX12(&cd.callbacks, Dev(), g.scratch, ffxFsr2GetScratchMemorySizeDX12()) != FFX_OK) { log_line("[ups] FSR2 interface failed\r\n"); return false; }
-    cd.device = ffxGetDeviceDX12(Dev());
-    cd.maxRenderSize = { dw, dh };   // any render scale up to native without re-creating
-    cd.displaySize = { dw, dh };
-    cd.flags = FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INVERTED | FFX_FSR2_ENABLE_AUTO_EXPOSURE;
-    FfxErrorCode e = ffxFsr2ContextCreate(&g.ctx, &cd);
-    if (e != FFX_OK) { log_line("[ups] FSR2 context failed (%d)\r\n", (int)e); return false; }
-    g.ctxOk = true; g.ctxW = dw; g.ctxH = dh; g.frames = 0;
-    log_line("[ups] FSR2 context %ux%u\r\n", dw, dh);
-  }
   return g.mv && g.out;
+}
+
+static bool EnsureFsr(UINT dw, UINT dh) {
+  if (g.fsr && (g.fsrW != dw || g.fsrH != dh)) { c.ffx.DestroyContext(&g.fsr, nullptr); g.fsr = nullptr; }
+  if (g.fsr) return true;
+  ffxCreateBackendDX12Desc be = {};
+  be.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12; be.device = Dev();
+  ffxCreateContextDescUpscaleVersion ver = {};
+  ver.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION; ver.header.pNext = &be.header; ver.version = FFX_UPSCALER_VERSION;
+  ffxCreateContextDescUpscale cd = {};
+  cd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE; cd.header.pNext = &ver.header;
+  cd.maxRenderSize = { dw, dh };   // any render scale up to native without re-creating
+  cd.maxUpscaleSize = { dw, dh };
+  cd.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
+  cd.fpMessage = &FfxMessage;
+  ffxReturnCode_t r = c.ffx.CreateContext(&g.fsr, &cd.header, nullptr);
+  if (r != FFX_API_RETURN_OK) { log_line("[ups] FSR context failed (%u)\r\n", (unsigned)r); g.fsr = nullptr; return false; }
+  g.fsrW = dw; g.fsrH = dh;
+  ffxQueryGetProviderVersion pv = {}; pv.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+  c.ffx.Query(&g.fsr, &pv.header);
+  log_line("[ups] FSR context %ux%u (%s)\r\n", dw, dh, pv.versionName ? pv.versionName : "?");
+  return true;
+}
+
+static bool EnsureDlss(ID3D12GraphicsCommandList* cl, UINT rw, UINT rh, UINT dw, UINT dh) {
+  if (g.dlssOk && g.dlssRw == rw && g.dlssRh == rh && g.dlssW == dw && g.dlssH == dh) return true;
+  g.dlssOk = c.dlssCreate(cl, rw, rh, dw, dh) == 1;
+  g.dlssRw = rw; g.dlssRh = rh; g.dlssW = dw; g.dlssH = dh;
+  log_line("[ups] DLSS feature %ux%u -> %ux%u %s\r\n", rw, rh, dw, dh, g.dlssOk ? "created" : "FAILED");
+  return g.dlssOk;
 }
 
 // Put the game's compute state back after our passes (they changed heaps, root signature, PSO, arguments).
@@ -179,7 +383,7 @@ static void RestoreGameState(BridgeCommandList* self) {
   if (t_lastPso) cl->SetPipelineState((ID3D12PipelineState*)t_lastPso);
 }
 
-static bool Run(BridgeCommandList* self) {
+static bool Run(BridgeCommandList* self, int mode) {
   if (!InitStatic()) return false;
   const UINT64 tab = t_ctab[kTabParam];
   if (!tab || t_cKind[kTabParam] != 1) return false;
@@ -197,11 +401,12 @@ static bool Run(BridgeCommandList* self) {
   }
   const D3D12_RESOURCE_DESC rc = colour->GetDesc(), rh = histA->GetDesc();
   const UINT rw = (UINT)rc.Width, rhh = rc.Height, dw = (UINT)rh.Width, dh = rh.Height;
-  if (!EnsureSizes(rw, rhh, dw, dh)) return false;
+  if (!EnsureTextures(rw, rhh, dw, dh)) return false;
   ID3D12GraphicsCommandList* cl = self->m_pRealCmdList;
+  if (mode == 1 ? !EnsureFsr(dw, dh) : !EnsureDlss(cl, rw, rhh, dw, dh)) return false;
   ID3D12Device* dev = Dev();
 
-  // inputs readable by compute (pixel|non-pixel = FSR2's COMPUTE_READ)
+  // inputs readable by compute (pixel|non-pixel = FFX's COMPUTE_READ; what DLSS expects too)
   const D3D12_RESOURCE_STATES kRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
   ListEnsureState(self, depth, kRead);
   ListEnsureState(self, colour, kRead);
@@ -220,8 +425,8 @@ static bool Run(BridgeCommandList* self) {
   cl->SetComputeRootSignature(g.mvRs);
   cl->SetPipelineState(g.mvPso);
   cl->SetComputeRootConstantBufferView(0, camVa);
-  // the game's jitter in FSR2's convention (pixels; the projection moves by (+2x/w, -2y/h) in NDC): minus the
-  // table entry, as measured from the camera constants (row 6)
+  // the game's jitter in the upscalers' convention (render pixels; the projection moves by (+2x/w, -2y/h) in
+  // NDC): minus the table entry, as measured from the camera constants (row 6). FSR and DLSS share it.
   const float* tbl = *(const float* const*)(g_exe + 0x013F4EE8);   // the game's 8-entry jitter table
   const UINT ji = (UINT)ctr & 7;
   const float jx = -tbl[2 * ji], jy = -tbl[2 * ji + 1];
@@ -233,33 +438,49 @@ static bool Run(BridgeCommandList* self) {
   b.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; b.Transition.StateAfter = kRead;
   cl->ResourceBarrier(1, &b);
 
-  // 2. FSR2
+  // 2. the upscaler
   LARGE_INTEGER now, fq; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&fq);
   float dt = (float)((now.QuadPart - g.last.QuadPart) * 1000.0 / fq.QuadPart); g.last = now;
   if (dt <= 0.0f || dt > 200.0f) dt = 16.6f;
-  FfxFsr2DispatchDescription dd = {};
-  dd.commandList = ffxGetCommandListDX12(cl);
-  dd.color = ffxGetResourceDX12(&g.ctx, colour, L"colour", FFX_RESOURCE_STATE_COMPUTE_READ);
-  dd.depth = ffxGetResourceDX12(&g.ctx, depth, L"depth", FFX_RESOURCE_STATE_COMPUTE_READ);
-  dd.motionVectors = ffxGetResourceDX12(&g.ctx, g.mv, L"mv", FFX_RESOURCE_STATE_COMPUTE_READ);
-  dd.output = ffxGetResourceDX12(&g.ctx, g.out, L"out", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
-  dd.jitterOffset = { jx, jy };
-  dd.motionVectorScale = { (float)rw, (float)rhh };
-  dd.renderSize = { rw, rhh };
-  dd.enableSharpening = true; dd.sharpness = 0.3f;
-  dd.frameTimeDelta = dt;
-  dd.preExposure = 1.0f;
-  // new history after a pause in FSR2 (option switched, loading, menus without the 3D view)
+  // new history after a pause (option switched, loading, menus without the 3D view)
   const LONG frame = g_rtLogFrame;
-  dd.reset = g.frames == 0 || frame - g.lastFrame > 2;
-  g.lastFrame = frame;
-  dd.cameraNear = 0.1f; dd.cameraFar = 55000.0f;
-  dd.cameraFovAngleVertical = 1.1f;
-  dd.viewSpaceToMetersFactor = 1.0f;
-  FfxErrorCode e = ffxFsr2ContextDispatch(&g.ctx, &dd);
+  const bool reset = g.frames == 0 || mode != g.lastMode || frame - g.lastFrame > 2;
+  g.lastFrame = frame; g.lastMode = mode;
+  int res = 0;
+  if (mode == 1) {
+    ffxDispatchDescUpscale dd = {};
+    dd.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
+    dd.commandList = cl;
+    dd.color = ffxApiGetResourceDX12(colour, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+    dd.depth = ffxApiGetResourceDX12(depth, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+    dd.motionVectors = ffxApiGetResourceDX12(g.mv, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+    dd.output = ffxApiGetResourceDX12(g.out, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+    dd.jitterOffset = { jx, jy };
+    dd.motionVectorScale = { (float)rw, (float)rhh };
+    dd.renderSize = { rw, rhh };
+    dd.upscaleSize = { dw, dh };
+    dd.enableSharpening = true; dd.sharpness = 0.3f;
+    dd.frameTimeDelta = dt;
+    dd.preExposure = 1.0f;
+    dd.reset = reset;
+    dd.cameraNear = 0.1f; dd.cameraFar = 55000.0f;
+    dd.cameraFovAngleVertical = 1.1f;
+    dd.viewSpaceToMetersFactor = 1.0f;
+    const ffxReturnCode_t r = c.ffx.Dispatch(&g.fsr, &dd.header);
+    res = r == FFX_API_RETURN_OK ? 1 : -(int)r;
+  } else {
+    RlDlssEval e = {};
+    e.color = colour; e.depth = depth; e.motion = g.mv; e.output = g.out;
+    e.jitterX = jx; e.jitterY = jy;
+    e.mvScaleX = (float)rw; e.mvScaleY = (float)rhh;
+    e.renderW = rw; e.renderH = rhh;
+    e.reset = reset ? 1 : 0;
+    e.frameTimeMs = dt;
+    res = c.dlssEval(cl, &e);
+  }
   b.Transition.StateBefore = kRead; b.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
   cl->ResourceBarrier(1, &b);
-  if (e != FFX_OK) { static volatile LONG s_e = 0; if (InterlockedIncrement(&s_e) <= 5) log_line("[ups] FSR2 dispatch failed (%d)\r\n", (int)e); }
+  if (res != 1) { static volatile LONG s_e = 0; if (InterlockedIncrement(&s_e) <= 5) log_line("[ups] %s dispatch failed (%d)\r\n", mode == 1 ? "FSR" : "DLSS", res); }
   ++g.frames;
 
   // 3. result -> both history buffers
@@ -275,7 +496,7 @@ static bool Run(BridgeCommandList* self) {
   cl->ResourceBarrier(1, &ob);
 
   RestoreGameState(self);
-  { static volatile LONG s_l = 0; if (InterlockedIncrement(&s_l) <= 3) log_line("[ups] FSR2 %ux%u -> %ux%u jitter[%u] %.4f %.4f\r\n", rw, rhh, dw, dh, ji, jx, jy); }
+  { static volatile LONG s_l = 0; if (InterlockedIncrement(&s_l) <= 3) log_line("[ups] %s %ux%u -> %ux%u jitter[%u] %.4f %.4f\r\n", mode == 1 ? c.fsrName : "DLSS", rw, rhh, dw, dh, ji, jx, jy); }
   return true;
 }
 
@@ -286,7 +507,7 @@ static void Install(HMODULE hExe) {
   static const uint8_t kSite[] = { 0x8B, 0x4B, 0x60, 0xC5, 0xF8, 0x57, 0xC0 };
   const uint8_t* tblPtr = (const uint8_t*)hExe + 0x013F4EE8;
   if (memcmp(site, kSite, sizeof(kSite)) != 0 || site[7] != 0x89 || *(const uintptr_t*)tblPtr == 0) {
-    log_line("[ups] WARNING: unexpected TAA setup code; FSR2 unavailable\r\n");
+    log_line("[ups] WARNING: unexpected TAA setup code; upscalers unavailable\r\n");
     return;
   }
   uint8_t* mem = (uint8_t*)AllocateNearAddress(site, 0x40);
@@ -370,12 +591,14 @@ static void Ups_OnExecute() {
 static bool Upscaler_OnDispatch(BridgeCommandList* self, UINT gx, UINT gy, UINT gz) {
   if (!ups::IsTaa()) return false;
   ups::Dump(self);
-  if (ups::Mode() != 1 || self->m_type != D3D12_COMMAND_LIST_TYPE_DIRECT) return false;
+  if (self->m_type != D3D12_COMMAND_LIST_TYPE_DIRECT) return false;
+  const int mode = ups::Mode();
+  if (mode == 0) return false;
   // The game's pass still runs: besides the colour history it writes the display-resolution depth and the
-  // history weight that depth of field / motion blur read later. FSR2 then replaces the colour.
+  // history weight that depth of field / motion blur read later. FSR or DLSS then replaces the colour.
   LONG bc = BcBegin(self, 'D', gx, gy, gz);
   self->m_pRealCmdList->Dispatch(gx, gy, gz);
   BcEnd(self, bc);
-  ups::Run(self);
+  ups::Run(self, mode);
   return true;
 }

@@ -10,11 +10,12 @@ $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path "$PSScriptRoot\.."
 
-# AMD FSR2 static libraries for d3d12_x.dll (downloaded and built once into deps\fsr2; FSR2_API_DIR
-# points at an existing ffx-fsr2-api folder instead)
-$fsr2 = $env:FSR2_API_DIR
-if (-not $fsr2) { $fsr2 = (& "$PSScriptRoot\build_fsr2.ps1" | Select-Object -Last 1) }
-if (-not (Test-Path "$fsr2\ffx_fsr2.h")) { throw "FSR2 API folder not found: $fsr2" }
+# Upscaler SDK files (AMD FidelityFX SDK for FSR 3.1/4, NVIDIA DLSS SDK for rl_dlss.dll), downloaded once
+# into deps\upscalers and checked by hash
+$ups = (& "$PSScriptRoot\fetch_upscalers.ps1" | Select-Object -Last 1)
+$ffxInc = "$ups\ffx\Kits\FidelityFX"
+$dlss = "$ups\dlss"
+if (-not (Test-Path "$ffxInc\api\include\ffx_api.h") -or -not (Test-Path "$dlss\include\nvsdk_ngx.h")) { throw "upscaler SDK files not found in $ups" }
 
 # Locate MSVC toolchain dynamically
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -98,9 +99,18 @@ try {
         "/DEF:$mmdevapi\Exports.def")
 
     # 5. d3d12_x.dll
-    Invoke-Cl @("/O2", "/std:c++20", "/LD", "/EHsc", "/I$kernelx", "/I$d3d12x", "/I$fsr2", "/Fed3d12_x.dll",
-        "$d3d12x\onrush_d3d12_x.cpp", "$d3d12x\xbox_sampler_translator.cpp", "/link", "kernelx.lib",
-        "$fsr2\bin\ffx_fsr2_api\ffx_fsr2_api_x64.lib", "$fsr2\bin\ffx_fsr2_api\ffx_fsr2_api_dx12_x64.lib")
+    # (FSR and DLSS are loaded at run time: only headers here)
+    Invoke-Cl @("/O2", "/std:c++20", "/LD", "/EHsc", "/I$kernelx", "/I$d3d12x", "/I$ffxInc\api\include",
+        "/I$ffxInc\upscalers\include", "/Fed3d12_x.dll",
+        "$d3d12x\onrush_d3d12_x.cpp", "$d3d12x\xbox_sampler_translator.cpp", "/link", "kernelx.lib")
+
+    # 5b. rl_dlss.dll: NVIDIA DLSS behind a small C interface (the proprietary NGX SDK is linked only here)
+    Invoke-Cl @("/O2", "/std:c++20", "/LD", "/EHsc", "/I$dlss\include", "/Ferl_dlss.dll",
+        "$root\src\rl_dlss\rl_dlss.cpp", "/link", "$dlss\lib\Windows_x86_64\x64\nvsdk_ngx_s.lib", "advapi32.lib", "user32.lib")
+
+    # 5c. the vendors' runtime DLLs next to the port's
+    Copy-Item "$dlss\lib\Windows_x86_64\rel\nvngx_dlss.dll", "$ffxInc\signedbin\amd_fidelityfx_loader_dx12.dll",
+        "$ffxInc\signedbin\amd_fidelityfx_upscaler_dx12.dll" $outDir -Force
 
     # 6. RushLauncher.exe
     # /utf-8: the source is UTF-8 (accents); /MANIFEST:EMBED: Common Controls v6 dependency

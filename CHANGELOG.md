@@ -4,6 +4,7 @@
 
 ### Novidades
 - **Configurações > Mudar usuário** agora funciona: mostra os perfis do launcher, e o jogo reinicia já no perfil escolhido, com os desbloqueios dele. Um aviso do jogo confirma a troca.
+- **Upscaler** com duas opções novas: **NVIDIA DLSS** (placas RTX) e **AMD FSR**, que agora é o FSR 3.1 (ou o FSR 4, nas placas AMD que têm). As duas deixam a imagem bem mais nítida com a resolução interna abaixo de 100%. Se a placa não tiver DLSS, o menu avisa e o jogo usa o FSR.
 
 ## v0.2.0 — opções gráficas no jogo, FSR 2, mouse e nuvens
 

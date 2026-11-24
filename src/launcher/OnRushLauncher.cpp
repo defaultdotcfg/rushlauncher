@@ -109,7 +109,7 @@ struct LauncherConfig
     int vsync;
     int gfxPreset;          // in-game "Graphics quality": 0 console, 1..5 PC ultra low .. ultra
     int fpsLimit;           // in-game "Frame rate limit" (fps, 0 = unlimited)
-    int upscaler;           // in-game "Upscaler": 0 TAA, 1 FSR 2
+    int upscaler;           // in-game "Upscaler": 0 TAA, 1 AMD FSR (3.1 / 4), 2 NVIDIA DLSS
     int gfxDetail[8];       // in-game detail rows (bridge gfx_options.inc kDetail order): level index, moved by the preset
     wchar_t gamePath[MAX_PATH];
     wchar_t savePath[MAX_PATH];
@@ -212,14 +212,18 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     wcscpy_s(cfg->theme, 8, L"dark");
 }
 
+// onrush.ini [Graphics] Upscaler values, by LauncherConfig::upscaler
+static const wchar_t *const kUpscalerIni[] = { L"TAA", L"FSR", L"DLSS" };
+
 // Upscaler and detail rows: also written by the game's GRAPHICS page, so read again when the game closes.
 // [Graphics] DetailLevels=1 marks the current format (level indexes); older inis had 0 = AUTO and the
 // levels shifted by one (debris: 1 few, 2 many).
 static void LoadGfxDetails(const wchar_t *iniPath, LauncherConfig *cfg)
 {
     wchar_t u[16] = {};
-    GetPrivateProfileStringW(L"Graphics", L"Upscaler", cfg->upscaler ? L"FSR2" : L"TAA", u, 16, iniPath);
-    cfg->upscaler = _wcsicmp(u, L"FSR2") == 0 ? 1 : 0;
+    GetPrivateProfileStringW(L"Graphics", L"Upscaler", kUpscalerIni[cfg->upscaler >= 0 && cfg->upscaler < 3 ? cfg->upscaler : 0], u, 16, iniPath);
+    // "FSR2" from older versions = FSR
+    cfg->upscaler = (_wcsicmp(u, L"FSR") == 0 || _wcsicmp(u, L"FSR2") == 0) ? 1 : _wcsicmp(u, L"DLSS") == 0 ? 2 : 0;
     bool levels = GetPrivateProfileIntW(L"Graphics", L"DetailLevels", 0, iniPath) >= 1;
     for (int d = 0; d < 8; ++d)
     {
@@ -289,7 +293,7 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
     WritePrivateProfileStringW(L"Graphics", L"Preset", buf, iniPath);
     swprintf_s(buf, 64, L"%d", cfg->fpsLimit);
     WritePrivateProfileStringW(L"Graphics", L"FpsLimit", buf, iniPath);
-    WritePrivateProfileStringW(L"Graphics", L"Upscaler", cfg->upscaler ? L"FSR2" : L"TAA", iniPath);
+    WritePrivateProfileStringW(L"Graphics", L"Upscaler", kUpscalerIni[cfg->upscaler >= 0 && cfg->upscaler < 3 ? cfg->upscaler : 0], iniPath);
     for (int d = 0; d < 8; ++d)
     {
         swprintf_s(buf, 64, L"%d", cfg->gfxDetail[d]);
@@ -545,6 +549,7 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     swprintf_s(envBuf, 64, L"%d", cfg->fpsLimit);
     SetEnvironmentVariableW(L"ONRUSH_FPS_LIMIT", envBuf);
     SetEnvironmentVariableW(L"ONRUSH_INI", iniPath);
+    SetEnvironmentVariableW(L"ONRUSH_LAUNCHER", L"1");   // the game was started by RushLauncher (profile switch)
 
     swprintf_s(envBuf, 64, L"%d", cfg->d3d12Debug);
     SetEnvironmentVariableW(L"ONRUSH_D3D12_DEBUG", envBuf);
@@ -636,13 +641,16 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     LogPrintf(L"[LAUNCHER] Perfil: %ls | desbloqueio: %ls\r\n", cfg->playerName,
               unlockAll ? L"tudo" : unlockCosmetics ? L"cosméticos" : L"nenhum");
 
+    // Only the debug option follows the game as a debugger (first-chance exceptions, debug output in this log):
+    // NVIDIA DLSS does not start in a process that has a debugger. Crashes are logged by the bridge either way.
+    const bool debugGame = g_debugMode;
     BOOL created = CreateProcessW(
         targetExe,
         cmdLine,
         nullptr,
         nullptr,
         FALSE,
-        DEBUG_ONLY_THIS_PROCESS | CREATE_SUSPENDED | CREATE_NO_WINDOW,  // game exe is console-subsystem: no CMD window
+        (debugGame ? DEBUG_ONLY_THIS_PROCESS : 0) | CREATE_SUSPENDED | CREATE_NO_WINDOW,  // game exe is console-subsystem: no CMD window
         nullptr,
         gameDir,
         &si,
@@ -673,7 +681,7 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     DEBUG_EVENT evt = {};
     DWORD continueStatus = DBG_CONTINUE;
 
-    while (WaitForDebugEvent(&evt, INFINITE))
+    while (debugGame && WaitForDebugEvent(&evt, INFINITE))
     {
         continueStatus = DBG_CONTINUE;
 
@@ -861,7 +869,8 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
         ContinueDebugEvent(evt.dwProcessId, evt.dwThreadId, continueStatus);
     }
 
-    DWORD waitRes = WaitForSingleObject(pi.hProcess, 10000);
+    // without the debug loop (normal launches) the launcher just waits for the game to close
+    DWORD waitRes = WaitForSingleObject(pi.hProcess, debugGame ? 10000 : INFINITE);
     if (waitRes == WAIT_OBJECT_0)
     {
         LogPrintf(L"[LAUNCHER] WaitForSingleObject: processo filho finalizado com sucesso (PID: %lu)\r\n",

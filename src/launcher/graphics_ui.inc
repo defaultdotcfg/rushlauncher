@@ -26,7 +26,8 @@ static const GfxText kGfxResVals[] = {
     { { L"50%", L"50%", L"50%" } }, { { L"67%", L"67%", L"67%" } }, { { L"75%", L"75%", L"75%" } },
     { { L"83%", L"83%", L"83%" } }, { { L"100%", L"100%", L"100%" } }, { { L"125%", L"125%", L"125%" } },
     { { L"150%", L"150%", L"150%" } }, { { L"200%", L"200%", L"200%" } } };
-static const GfxText kGfxUpscalerVals[] = { { { L"TAA", L"TAA", L"TAA" } }, { { L"FSR 2", L"FSR 2", L"FSR 2" } } };
+static const GfxText kGfxUpscalerVals[] = { { { L"TAA", L"TAA", L"TAA" } }, { { L"FSR", L"FSR", L"FSR" } },
+    { { L"DLSS", L"DLSS", L"DLSS" } } };
 static const GfxText kGfxShadowVals[] = {
     { { L"Baixa", L"Low", L"Baja" } }, { { L"Média", L"Medium", L"Media" } }, { { L"Alta", L"High", L"Alta" } },
     { { L"Ultra", L"Ultra", L"Ultra" } } };
@@ -47,7 +48,7 @@ static const GfxRowDef kGfxRows[GR_COUNT] = {
     { { { L"Qualidade gráfica", L"Graphics quality", L"Calidad gráfica" } }, kGfxPresetVals, 6, -1 },
     { { { L"Limite de quadros", L"Frame rate limit", L"Límite de FPS" } }, kGfxFpsVals, 8, -1 },
     { { { L"Resolução interna", L"Render resolution", L"Resolución interna" } }, kGfxResVals, 8, 0 },
-    { { { L"Upscaler", L"Upscaler", L"Escalado" } }, kGfxUpscalerVals, 2, -1 },
+    { { { L"Upscaler", L"Upscaler", L"Escalado" } }, kGfxUpscalerVals, 3, -1 },
     { { { L"Sombras", L"Shadows", L"Sombras" } }, kGfxShadowVals, 4, 1 },
     { { { L"Névoa", L"Fog", L"Niebla" } }, kGfxFogVals, 3, 5 },
     { { { L"Detalhe do cenário", L"World detail", L"Detalle del escenario" } }, kGfxLodVals, 4, 2 },

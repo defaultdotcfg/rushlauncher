@@ -27,6 +27,8 @@
 
 namespace lang { static void ShowNotice(const char *title, const char *text); }  // language.inc
 
+namespace ups { static const char *FsrName(); static bool DlssAvailable(); }   // upscaler.inc
+
 namespace gfxopt {
 
 static const char *const kPresetSuffix[] = {"XBoxOne-Base", "PC-UltraLow", "PC-Low", "PC-Medium", "PC-High", "PC-UltraHigh"};
@@ -37,7 +39,8 @@ static const int kFpsCount = 8;
 static volatile LONG g_preset = 0;
 static volatile LONG g_fpsIdx = 1;
 static volatile LONG g_vsync = 1;
-static volatile LONG g_upscaler = 0;   // 0 = the game's TAA, 1 = FSR 2 (upscaler.inc)
+static volatile LONG g_upscaler = 0;   // 0 = the game's TAA, 1 = AMD FSR 3.1 / 4, 2 = NVIDIA DLSS (upscaler.inc)
+static const wchar_t *const kUpscalerIni[] = {L"TAA", L"FSR", L"DLSS"};
 static wchar_t g_ini[MAX_PATH] = {};
 static HMODULE g_exe = nullptr;
 static bool g_tearingSupported = false;
@@ -69,7 +72,7 @@ static void SaveIni() {
   WritePrivateProfileStringW(L"Graphics", L"FpsLimit", b, g_ini);
   swprintf_s(b, L"%ld", (long)g_vsync);
   WritePrivateProfileStringW(L"Display", L"VSync", b, g_ini);
-  WritePrivateProfileStringW(L"Graphics", L"Upscaler", g_upscaler ? L"FSR2" : L"TAA", g_ini);
+  WritePrivateProfileStringW(L"Graphics", L"Upscaler", kUpscalerIni[g_upscaler >= 0 && g_upscaler < 3 ? g_upscaler : 0], g_ini);
 }
 
 // ---- texts --------------------------------------------------------------------------------------
@@ -152,7 +155,9 @@ static const Text kTexts[] = {
                         "Nowa rozdzielczość zostanie użyta przy następnym uruchomieniu ONRUSH."}},
   {"ID_RL_UPSCALER", {"UPSCALER", "UPSCALER", "MISE À L'ÉCHELLE", "ESCALADO", "UPSCALER", "UPSCALER", "SKALOWANIE"}},
   {"ID_RL_UPS_TAA", {"TAA", "TAA", "TAA", "TAA", "TAA", "TAA", "TAA"}},
-  {"ID_RL_UPS_FSR2", {"FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2", "FSR 2"}},
+  // FSR and DLSS: the name comes from the upscaler module (FSR 3.1 or FSR 4, by what the GPU runs)
+  {"ID_RL_UPS_DLSS_NA", {"DLSS (UNSUPPORTED)", "DLSS (SEM SUPORTE)", "DLSS (NON PRIS EN CHARGE)", "DLSS (NO COMPATIBLE)",
+                         "DLSS (NICHT UNTERSTÜTZT)", "DLSS (NON SUPPORTATO)", "DLSS (NIEOBSŁUGIWANE)"}},
   // voices and text page (language.inc)
   {"ID_RL_VOICE_TEXT", {"VOICES AND TEXT", "VOZES E TEXTO", "VOIX ET TEXTE", "VOCES Y TEXTO", "STIMMEN UND TEXT",
                         "VOCI E TESTO", "GŁOSY I TEKST"}},
@@ -229,6 +234,13 @@ static PFN_Localise g_trueLocalise = nullptr;
 
 static const char *HookLocalise(const char *key) {
   if (key && key[0] == 'I' && strncmp(key, "ID_RL_", 6) == 0) {
+    if (strncmp(key + 6, "UPS_", 4) == 0) {
+      if (strcmp(key + 10, "FSR") == 0) return ups::FsrName();
+      if (strcmp(key + 10, "DLSS") == 0) {
+        if (ups::DlssAvailable()) return "DLSS";
+        key = "ID_RL_UPS_DLSS_NA";
+      }
+    }
     for (int i = 0; i < 7; ++i)
       if (strcmp(key, kFpsKeys[i]) == 0) return kFpsLabels[i];
     for (int i = 0; i < (int)_countof(kPctKeys); ++i)
@@ -664,11 +676,11 @@ static void OnFps(float value, int) {
   SaveIni();
   log_line("[gfx] frame rate limit -> %d\r\n", kFpsChoices[g_fpsIdx]);
 }
-static const char *const kUpscalerKeys[] = {"ID_RL_UPS_TAA", "ID_RL_UPS_FSR2"};
+static const char *const kUpscalerKeys[] = {"ID_RL_UPS_TAA", "ID_RL_UPS_FSR", "ID_RL_UPS_DLSS"};
 static void OnUpscaler(float value, int) {
-  g_upscaler = ListIndex(value, 2);
+  g_upscaler = ListIndex(value, 3);
   SaveIni();
-  log_line("[gfx] upscaler -> %s\r\n", g_upscaler ? "FSR 2" : "TAA");
+  log_line("[gfx] upscaler -> %ls\r\n", kUpscalerIni[g_upscaler]);
 }
 static void OnVsync(float value, int) {
   g_vsync = ListIndex(value, 2);
@@ -738,7 +750,7 @@ static void AddRows(void *page) {
     add(page, &it);
     if (d == D_RES) {
       it.name = "ID_RL_UPSCALER"; it.callback = (void *)&OnUpscaler; it.id = kIdUpscaler;
-      it.values = kUpscalerKeys; it.count = 2; it.value = (float)g_upscaler;
+      it.values = kUpscalerKeys; it.count = 3; it.value = (float)g_upscaler;
       add(page, &it);
     }
   }
@@ -829,10 +841,10 @@ static void Install(HMODULE hExe) {
     if (kFpsChoices[i] == fps) g_fpsIdx = i;
   g_vsync = EnvInt("ONRUSH_VSYNC", 1) ? 1 : 0;
   {
-    // ONRUSH_UPSCALER overrides onrush.ini [Graphics] Upscaler (TAA / FSR2)
+    // ONRUSH_UPSCALER overrides onrush.ini [Graphics] Upscaler (TAA / FSR / DLSS; "FSR2" from older versions = FSR)
     wchar_t u[16] = {};
     if (!GetEnvironmentVariableW(L"ONRUSH_UPSCALER", u, 16) && g_ini[0]) GetPrivateProfileStringW(L"Graphics", L"Upscaler", L"TAA", u, 16, g_ini);
-    g_upscaler = _wcsicmp(u, L"FSR2") == 0 ? 1 : 0;
+    g_upscaler = (_wcsicmp(u, L"FSR") == 0 || _wcsicmp(u, L"FSR2") == 0) ? 1 : _wcsicmp(u, L"DLSS") == 0 ? 2 : 0;
   }
   // Detail rows: [Graphics] DetailLevels=1 = level indexes; older inis had 0 = AUTO (-> the preset's
   // level) and every level one higher (debris: 1 few, 2 many). Missing keys take the preset's level.
