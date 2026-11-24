@@ -125,7 +125,6 @@ struct LauncherConfig
     wchar_t photoFormat[8]; // photo mode export (F12): png or jpg
     int musicEnabled;       // play the player's own playlist in game instead of the game music
     int musicShuffle;
-    int musicVolume;        // 0..100
     wchar_t musicPlaylist[64]; // playlist name (file <launcher dir>\playlists\<name>.m3u8)
     int minimizeOnPlay;     // minimize the launcher when the game starts (restored when it closes)
     wchar_t theme[8];       // launcher colours: dark or light
@@ -206,7 +205,6 @@ static void SetDefaultConfig(LauncherConfig *cfg)
     wcscpy_s(cfg->photoFormat, 8, L"png");
     cfg->musicEnabled = 0;
     cfg->musicShuffle = 0;
-    cfg->musicVolume = 70;
     cfg->musicPlaylist[0] = L'\0';
     cfg->minimizeOnPlay = 1;
     wcscpy_s(cfg->theme, 8, L"dark");
@@ -266,8 +264,6 @@ static void LoadConfigFile(const wchar_t *iniPath, LauncherConfig *cfg)
     if (_wcsicmp(cfg->photoFormat, L"jpg") != 0) wcscpy_s(cfg->photoFormat, 8, L"png");
     cfg->musicEnabled = GetPrivateProfileIntW(L"Music", L"Enabled", cfg->musicEnabled, iniPath);
     cfg->musicShuffle = GetPrivateProfileIntW(L"Music", L"Shuffle", cfg->musicShuffle, iniPath);
-    cfg->musicVolume = GetPrivateProfileIntW(L"Music", L"Volume", cfg->musicVolume, iniPath);
-    if (cfg->musicVolume < 0 || cfg->musicVolume > 100) cfg->musicVolume = 70;
     GetPrivateProfileStringW(L"Music", L"Playlist", cfg->musicPlaylist, cfg->musicPlaylist, 64, iniPath);
     cfg->minimizeOnPlay = GetPrivateProfileIntW(L"Launcher", L"MinimizeOnPlay", cfg->minimizeOnPlay, iniPath);
     // ini written before "Minimizar o launcher ao jogar" became on by default (v0.2.0): turn it on once
@@ -326,8 +322,7 @@ static void SaveConfigFile(const wchar_t *iniPath, const LauncherConfig *cfg)
     WritePrivateProfileStringW(L"Music", L"Enabled", buf, iniPath);
     swprintf_s(buf, 64, L"%d", cfg->musicShuffle);
     WritePrivateProfileStringW(L"Music", L"Shuffle", buf, iniPath);
-    swprintf_s(buf, 64, L"%d", cfg->musicVolume);
-    WritePrivateProfileStringW(L"Music", L"Volume", buf, iniPath);
+    WritePrivateProfileStringW(L"Music", L"Volume", nullptr, iniPath);   // gone: the playlist follows the game music volume
     WritePrivateProfileStringW(L"Music", L"Playlist", cfg->musicPlaylist, iniPath);
     swprintf_s(buf, 64, L"%d", cfg->minimizeOnPlay);
     WritePrivateProfileStringW(L"Launcher", L"MinimizeOnPlay", buf, iniPath);
@@ -581,17 +576,15 @@ static DWORD WINAPI GameSupervisorThread(LPVOID lpParam)
     // Own playlist (launcher "Playlist" tab): the bridge plays it in place of the game music. It gets the
     // chosen playlist even when "own music" is off: the game's PLAYLIST options can switch it on.
     {
-        wchar_t pl[MAX_PATH] = {}, vol[16];
+        wchar_t pl[MAX_PATH] = {};
         if (!PLAYLIST_HIDDEN && cfg->musicPlaylist[0])
         {
             swprintf_s(pl, MAX_PATH, L"%ls\\playlists\\%ls.m3u8", g_exeDir, cfg->musicPlaylist);
             if (GetFileAttributesW(pl) == INVALID_FILE_ATTRIBUTES) pl[0] = 0;
         }
-        swprintf_s(vol, 16, L"%d", cfg->musicVolume);
         SetEnvironmentVariableW(L"ONRUSH_MUSIC_PLAYLIST", pl[0] ? pl : nullptr);
         SetEnvironmentVariableW(L"ONRUSH_MUSIC_ENABLED", pl[0] ? (cfg->musicEnabled ? L"1" : L"0") : nullptr);
         SetEnvironmentVariableW(L"ONRUSH_MUSIC_SHUFFLE", pl[0] && cfg->musicShuffle ? L"1" : nullptr);
-        SetEnvironmentVariableW(L"ONRUSH_MUSIC_VOLUME", pl[0] ? vol : nullptr);
     }
     {
         wchar_t gameDir[MAX_PATH], saveDir[MAX_PATH];

@@ -5,7 +5,6 @@
 //                           next file, "#ONRUSH-OFF" marks it as switched off)
 //   ONRUSH_MUSIC_ENABLED  = 0 to start with the game's own music (default 1)
 //   ONRUSH_MUSIC_SHUFFLE  = 1 to shuffle
-//   ONRUSH_MUSIC_VOLUME   = 0..100, the playlist's level against the game's music volume (default 70)
 //
 // The tracks replace the game music where it would play, following the game:
 //  * The game's music manager sets a music state for every screen (exe+0x332010 SetMusicState(mgr, state),
@@ -47,7 +46,6 @@ static std::vector<Track> g_tracks;        // in file order; fixed after Install
 static wchar_t g_m3u[MAX_PATH] = {};
 static volatile LONG g_enabled = 1;        // 1 = the playlist replaces the game music
 static volatile LONG g_shuffle = 0;
-static float g_trim = 0.7f;                // ONRUSH_MUSIC_VOLUME
 static SRWLOCK g_fileLock = SRWLOCK_INIT;
 
 static std::string Utf8(const std::wstring &w) {
@@ -330,7 +328,7 @@ static DWORD WINAPI PlayerThread(void *) {
   for (;;) {
     WaitForSingleObject(g_wake, kTick);
     const bool want = Wanted();
-    float gain = g_gameVolume * g_trim;
+    float gain = g_gameVolume;   // the game's music volume, as the original music would play
     if (gain < 0.0f) gain = 0.0f; else if (gain > 1.0f) gain = 1.0f;
 
     // the track in the engine ended, failed or was switched off: on to the next one
@@ -518,12 +516,11 @@ static void Install(HMODULE hExe) {
   wchar_t v[16] = {};
   if (GetEnvironmentVariableW(L"ONRUSH_MUSIC_ENABLED", v, 16)) g_enabled = v[0] != L'0';
   g_shuffle = GetEnvironmentVariableW(L"ONRUSH_MUSIC_SHUFFLE", v, 16) && v[0] == L'1';
-  if (GetEnvironmentVariableW(L"ONRUSH_MUSIC_VOLUME", v, 16)) g_trim = (std::min)(100, (std::max)(0, _wtoi(v))) / 100.0f;
   LoadPlaylist();
   int found = 0;
   for (const Track &t : g_tracks) found += t.exists;
-  log_line("[music] playlist '%ls': %d songs (%d found, %d on), %s, %s, level %.2f\r\n", g_m3u, (int)g_tracks.size(), found,
-           PlayableCount(), g_enabled ? "replaces the game music" : "game music chosen", g_shuffle ? "shuffle" : "in order", g_trim);
+  log_line("[music] playlist '%ls': %d songs (%d found, %d on), %s, %s\r\n", g_m3u, (int)g_tracks.size(), found,
+           PlayableCount(), g_enabled ? "replaces the game music" : "game music chosen", g_shuffle ? "shuffle" : "in order");
   if (found == 0) return;
 
   // game music state and pause duck

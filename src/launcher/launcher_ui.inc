@@ -1256,7 +1256,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 if (g_hGameProcess) TerminateProcess(g_hGameProcess, 0);
                 return 0;
             }
-            PlPreviewStop();
             ReadUiIntoConfig();
             SaveIni();
             if (!GameDirIsReady(g_gameDirShown))
@@ -1428,7 +1427,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     {
         ReadUiIntoConfig();
         SaveIni();
-        PlShutdown();
         HFONT fonts[] = { g_hFontUI, g_hFontUIBold, g_hFontSmallCaps, g_hFontPlay, g_hFontLog };
         for (HFONT f : fonts) if (f) DeleteObject(f);
         HBRUSH brushes[] = { g_hBrushMain, g_hBrushCard, g_hBrushInput, g_hBrushLog };

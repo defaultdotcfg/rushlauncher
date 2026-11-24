@@ -3,19 +3,15 @@
 //  - playlists are UTF-8 .m3u8 files in <launcher dir>\playlists\<name>.m3u8
 //  - create / rename / delete, choose one in a dropdown
 //  - add files or folders (button or drag-and-drop from Explorer), reorder by dragging,
-//    Del removes, double-click previews; search by title, artist or file name
-//  - the bridge plays the chosen playlist in game and holds the game music at 0
+//    Del removes; search by title, artist or file name
+//  - the bridge plays the chosen playlist in game in place of the game music, at its music volume
 // Included from launcher_ui.inc (uses its fonts, colours, T()/g_uiLang and SaveIni()).
 // ============================================================================
 #include <propkey.h>
 #include <propvarutil.h>
-#include <mfapi.h>
-#include <mfmediaengine.h>
 #include <string>
 #include <algorithm>
 #pragma comment(lib, "propsys.lib")
-#pragma comment(lib, "mfplat.lib")
-#pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "oleaut32.lib")
 
 #define ID_TAB_SETTINGS   1040
@@ -28,23 +24,17 @@
 #define ID_PL_DELETE      1045
 #define ID_PL_ENABLE      1046
 #define ID_PL_SHUFFLE     1047
-#define ID_PL_VOLUME      1048
 #define ID_PL_ADDFILES    1049
 #define ID_PL_ADDFOLDER   1050
 #define ID_PL_SEARCH      1051
 #define ID_PL_LIST        1052
 #define ID_PL_NAMEEDIT    1053
-#define ID_PL_PLAY        1054
-#define ID_PL_STOP        1055
-#define ID_PL_NEXT        1056
 #define ID_PL_REMOVE      1057
-#define WM_PL_PREVIEW_EVENT (WM_APP + 40)
-#define PL_TIMER_ID       77
 
 enum PlStr {
-    P_TAB_PLAYLIST, P_PLAYLIST, P_NEW, P_RENAME, P_DELETE, P_ENABLE, P_SHUFFLE, P_VOLUME, P_ADDFILES, P_ADDFOLDER,
-    P_SEARCH, P_EMPTY, P_EMPTY2, P_HINT, P_NONE, P_DEFAULTNAME, P_CONFIRM_DEL, P_NAME_EXISTS, P_SONGS, P_PREVIEW,
-    P_NOTHING, P_REMOVE, P_PICK_FOLDER, P_NO_MATCH, P_NEED_PLAYLIST, P_GAME_NOTE, P_TAB_HOME, P_TAB_SETUP, P_COUNT
+    P_TAB_PLAYLIST, P_PLAYLIST, P_NEW, P_RENAME, P_DELETE, P_ENABLE, P_SHUFFLE, P_ADDFILES, P_ADDFOLDER,
+    P_SEARCH, P_EMPTY, P_EMPTY2, P_HINT, P_NONE, P_DEFAULTNAME, P_CONFIRM_DEL, P_NAME_EXISTS, P_SONGS,
+    P_REMOVE, P_PICK_FOLDER, P_NO_MATCH, P_NEED_PLAYLIST, P_GAME_NOTE, P_TAB_HOME, P_TAB_SETUP, P_COUNT
 };
 static const wchar_t *kPlStr[P_COUNT][3] = {
     { L"PLAYLIST", L"PLAYLIST", L"PLAYLIST" },
@@ -54,30 +44,27 @@ static const wchar_t *kPlStr[P_COUNT][3] = {
     { L"Excluir", L"Delete", L"Eliminar" },
     { L"Tocar minha playlist no jogo", L"Play my playlist in game", L"Reproducir mi playlist en el juego" },
     { L"Ordem aleatória", L"Shuffle", L"Orden aleatorio" },
-    { L"Volume da música", L"Music volume", L"Volumen de la música" },
     { L"Adicionar músicas", L"Add songs", L"Añadir canciones" },
     { L"Adicionar pasta", L"Add folder", L"Añadir carpeta" },
     { L"Pesquisar por música, artista ou arquivo", L"Search by song, artist or file", L"Buscar por canción, artista o archivo" },
     { L"Arraste músicas ou pastas para cá", L"Drag songs or folders here", L"Arrastra canciones o carpetas aquí" },
     { L"ou use \"Adicionar músicas\" no painel ao lado", L"or use \"Add songs\" in the side panel", L"o usa \"Añadir canciones\" en el panel lateral" },
-    { L"Arraste para reordenar  ·  Del remove  ·  Duplo clique ouve a prévia",
-      L"Drag to reorder  ·  Del removes  ·  Double-click previews",
-      L"Arrastra para reordenar  ·  Supr elimina  ·  Doble clic para escuchar" },
+    { L"Arraste para reordenar  ·  Del remove",
+      L"Drag to reorder  ·  Del removes",
+      L"Arrastra para reordenar  ·  Supr elimina" },
     { L"(nenhuma playlist)", L"(no playlist)", L"(ninguna playlist)" },
     { L"Minha playlist", L"My playlist", L"Mi playlist" },
     { L"Excluir a playlist \"%ls\"?\nO arquivo vai para a Lixeira.", L"Delete the playlist \"%ls\"?\nThe file goes to the Recycle Bin.",
       L"¿Eliminar la playlist \"%ls\"?\nEl archivo va a la Papelera." },
     { L"Já existe uma playlist com esse nome.", L"A playlist with that name already exists.", L"Ya existe una playlist con ese nombre." },
     { L"%d músicas  ·  %ls", L"%d songs  ·  %ls", L"%d canciones  ·  %ls" },
-    { L"PRÉVIA", L"PREVIEW", L"VISTA PREVIA" },
-    { L"Nada tocando", L"Nothing playing", L"Nada en reproducción" },
     { L"Remover", L"Remove", L"Quitar" },
     { L"Selecione uma pasta com músicas", L"Select a folder with music", L"Selecciona una carpeta con música" },
     { L"Nenhuma música encontrada para \"%ls\"", L"No songs match \"%ls\"", L"Ninguna canción coincide con \"%ls\"" },
     { L"Crie uma playlist primeiro (botão Nova).", L"Create a playlist first (New button).", L"Crea una playlist primero (botón Nueva)." },
-    { L"No jogo, a música original fica em silêncio enquanto a sua playlist toca.",
-      L"In game, the original music is muted while your playlist plays.",
-      L"En el juego, la música original se silencia mientras suena tu playlist." },
+    { L"No jogo, a playlist toca no lugar da música original, no mesmo volume (Volume da música do jogo). Em Configurações > Playlist dá para trocar a ordem e ligar ou desligar cada música.",
+      L"In game, the playlist plays in place of the original music, at the same volume (the game's Music volume). Settings > Playlist changes the order and switches each song on or off.",
+      L"En el juego, la playlist suena en lugar de la música original, al mismo volumen (Volumen de la música del juego). En Ajustes > Playlist se cambia el orden y se activa o desactiva cada canción." },
     { L"Jogar", L"Play", L"Jugar" },
     { L"Perfis", L"Profiles", L"Perfiles" },
 };
@@ -97,9 +84,9 @@ static void PhUpdateVisibility(HWND hwnd);
 static void KbUpdateVisibility(HWND hwnd);
 static HWND g_hTabHome = nullptr, g_hTabSettings = nullptr, g_hTabPlaylist = nullptr, g_hTabSetup = nullptr;
 static HWND g_hPlCombo = nullptr, g_hPlNew = nullptr, g_hPlRename = nullptr, g_hPlDelete = nullptr;
-static HWND g_hPlEnable = nullptr, g_hPlShuffle = nullptr, g_hPlVolume = nullptr, g_hPlAddFiles = nullptr, g_hPlAddFolder = nullptr;
+static HWND g_hPlEnable = nullptr, g_hPlShuffle = nullptr, g_hPlAddFiles = nullptr, g_hPlAddFolder = nullptr;
 static HWND g_hPlSearch = nullptr, g_hPlList = nullptr, g_hPlNameEdit = nullptr;
-static HWND g_hPlPlay = nullptr, g_hPlStop = nullptr, g_hPlNext = nullptr, g_hPlRemove = nullptr;
+static HWND g_hPlRemove = nullptr;
 
 // ---- files -----------------------------------------------------------------------------------
 static void PlDir(wchar_t *out) { swprintf_s(out, MAX_PATH, L"%ls\\playlists", g_exeDir); }
@@ -284,79 +271,6 @@ static int PlFindName(const std::wstring &n)
     return -1;
 }
 
-// ---- preview player (Media Foundation media engine, audio only) -------------------------------
-struct PlPreviewNotify : IMFMediaEngineNotify {
-    volatile LONG refs = 1;
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **pp) override {
-        if (id == __uuidof(IUnknown) || id == __uuidof(IMFMediaEngineNotify)) { *pp = this; AddRef(); return S_OK; }
-        *pp = nullptr; return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&refs); }
-    ULONG STDMETHODCALLTYPE Release() override { LONG r = InterlockedDecrement(&refs); if (!r) delete this; return r; }
-    HRESULT STDMETHODCALLTYPE EventNotify(DWORD ev, DWORD_PTR, DWORD) override {
-        if (ev == MF_MEDIA_ENGINE_EVENT_ENDED || ev == MF_MEDIA_ENGINE_EVENT_ERROR || ev == MF_MEDIA_ENGINE_EVENT_PLAYING ||
-            ev == MF_MEDIA_ENGINE_EVENT_PAUSE)
-            PostMessageW(g_hMainWnd, WM_PL_PREVIEW_EVENT, ev, 0);
-        return S_OK;
-    }
-};
-static IMFMediaEngine *g_plEngine = nullptr;
-static std::wstring g_plPreviewPath;   // file in the preview player ("" = nothing)
-static int g_plPreviewIdx = -1;        // its row in g_plTracks (re-found by path after edits)
-static bool g_plPreviewPaused = false;
-
-static bool PlEnsureEngine()
-{
-    if (g_plEngine) return true;
-    if (FAILED(MFStartup(MF_VERSION, MFSTARTUP_LITE))) return false;
-    IMFMediaEngineClassFactory *factory = nullptr;
-    IMFAttributes *attr = nullptr;
-    PlPreviewNotify *notify = new PlPreviewNotify();
-    HRESULT hr = CoCreateInstance(CLSID_MFMediaEngineClassFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-    if (SUCCEEDED(hr)) hr = MFCreateAttributes(&attr, 2);
-    if (SUCCEEDED(hr)) hr = attr->SetUnknown(MF_MEDIA_ENGINE_CALLBACK, notify);
-    if (SUCCEEDED(hr)) hr = factory->CreateInstance(MF_MEDIA_ENGINE_AUDIOONLY, attr, &g_plEngine);
-    if (attr) attr->Release();
-    if (factory) factory->Release();
-    notify->Release();
-    return SUCCEEDED(hr) && g_plEngine;
-}
-static void PlPreviewVolume() { if (g_plEngine) g_plEngine->SetVolume(g_config.musicVolume / 100.0); }
-
-static void PlPreviewStop()
-{
-    if (g_plEngine) { g_plEngine->Pause(); g_plEngine->SetCurrentTime(0); }
-    g_plPreviewPath.clear();
-    g_plPreviewPaused = false;
-    KillTimer(g_hMainWnd, PL_TIMER_ID);
-}
-static void PlPreviewPlay(int track)
-{
-    if (track < 0 || track >= (int)g_plTracks.size() || !PlEnsureEngine()) return;
-    g_plPreviewPath = g_plTracks[track].path;
-    g_plPreviewIdx = track;
-    g_plPreviewPaused = false;
-    BSTR url = SysAllocString(g_plPreviewPath.c_str());
-    g_plEngine->SetSource(url);
-    SysFreeString(url);
-    PlPreviewVolume();
-    g_plEngine->Play();
-    SetTimer(g_hMainWnd, PL_TIMER_ID, 250, nullptr);
-}
-static int PlPreviewIndex()
-{
-    if (g_plPreviewPath.empty()) return -1;
-    if (g_plPreviewIdx >= 0 && g_plPreviewIdx < (int)g_plTracks.size() && g_plTracks[g_plPreviewIdx].path == g_plPreviewPath) return g_plPreviewIdx;
-    for (size_t i = 0; i < g_plTracks.size(); ++i) if (g_plTracks[i].path == g_plPreviewPath) return g_plPreviewIdx = (int)i;
-    return -1;
-}
-static void PlPreviewNext()
-{
-    if (g_plTracks.empty()) return;
-    int i = PlPreviewIndex();
-    PlPreviewPlay(i < 0 ? 0 : (i + 1) % (int)g_plTracks.size());
-}
-
 // ---- UI --------------------------------------------------------------------------------------
 static std::wstring FmtTime(int s)
 {
@@ -481,7 +395,6 @@ static void PlDeleteCurrent(HWND hwnd)
     wchar_t msg[512];
     swprintf_s(msg, kPlStr[P_CONFIRM_DEL][g_uiLang], g_plNames[g_plCur].c_str());
     if (MessageBoxW(hwnd, msg, L"ONRUSH", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) != IDYES) return;
-    PlPreviewStop();
     wchar_t path[MAX_PATH + 2] = {};
     PlFile(g_plNames[g_plCur], path);   // double-NUL terminated for SHFileOperation
     SHFILEOPSTRUCTW op = {};
@@ -540,9 +453,6 @@ static void PlRemoveRow(int row)
 {
     if (row < 0 || row >= (int)g_plView.size()) return;
     int t = g_plView[row];
-    int playing = PlPreviewIndex();
-    if (t == playing) PlPreviewStop();
-    else if (playing > t) g_plPreviewIdx = playing - 1;
     g_plTracks.erase(g_plTracks.begin() + t);
     PlSave();
     PlRefreshList();
@@ -573,17 +483,8 @@ static void PlCreateControls(HWND hwnd)
     g_hPlDelete = CreateWindowW(L"BUTTON", L"", od, X + 2 * (bw + 8), 118, bw, 30, hwnd, (HMENU)ID_PL_DELETE, nullptr, nullptr);
     g_hPlEnable = CreateWindowW(L"BUTTON", L"", od, X, 162, W, 24, hwnd, (HMENU)ID_PL_ENABLE, nullptr, nullptr);
     g_hPlShuffle = CreateWindowW(L"BUTTON", L"", od, X, 188, W, 24, hwnd, (HMENU)ID_PL_SHUFFLE, nullptr, nullptr);
-    g_hPlVolume = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS | TBS_BOTH, X - 4, 242, W + 8, 26,
-                                hwnd, (HMENU)ID_PL_VOLUME, nullptr, nullptr);
-    SendMessageW(g_hPlVolume, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-    SendMessageW(g_hPlVolume, TBM_SETPAGESIZE, 0, 10);
-    SendMessageW(g_hPlVolume, TBM_SETPOS, TRUE, g_config.musicVolume);
-    g_hPlAddFiles = CreateWindowW(L"BUTTON", L"", od, X, 284, HALF, 30, hwnd, (HMENU)ID_PL_ADDFILES, nullptr, nullptr);
-    g_hPlAddFolder = CreateWindowW(L"BUTTON", L"", od, X + HALF + 12, 284, HALF, 30, hwnd, (HMENU)ID_PL_ADDFOLDER, nullptr, nullptr);
-    // preview card: 330..458; transport buttons at the bottom of the card
-    g_hPlPlay = CreateWindowW(L"BUTTON", L"", od, X + 12, 416, 44, 30, hwnd, (HMENU)ID_PL_PLAY, nullptr, nullptr);
-    g_hPlStop = CreateWindowW(L"BUTTON", L"", od, X + 62, 416, 44, 30, hwnd, (HMENU)ID_PL_STOP, nullptr, nullptr);
-    g_hPlNext = CreateWindowW(L"BUTTON", L"", od, X + 112, 416, 44, 30, hwnd, (HMENU)ID_PL_NEXT, nullptr, nullptr);
+    g_hPlAddFiles = CreateWindowW(L"BUTTON", L"", od, X, 228, HALF, 30, hwnd, (HMENU)ID_PL_ADDFILES, nullptr, nullptr);
+    g_hPlAddFolder = CreateWindowW(L"BUTTON", L"", od, X + HALF + 12, 228, HALF, 30, hwnd, (HMENU)ID_PL_ADDFOLDER, nullptr, nullptr);
 
     // song list over the art
     g_hPlSearch = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 244, 75, UI_HERO_W - 268 - 100, 20, hwnd, (HMENU)ID_PL_SEARCH, nullptr, nullptr);
@@ -618,9 +519,6 @@ static void PlApplyLanguage()
     SetWindowTextW(g_hPlAddFiles, PT(P_ADDFILES));
     SetWindowTextW(g_hPlAddFolder, PT(P_ADDFOLDER));
     SetWindowTextW(g_hPlRemove, PT(P_REMOVE));
-    SetWindowTextW(g_hPlPlay, g_plPreviewPath.empty() || g_plPreviewPaused ? L"▶" : L"❚❚");
-    SetWindowTextW(g_hPlStop, L"■");
-    SetWindowTextW(g_hPlNext, L"▶▶");
     SendMessageW(g_hPlSearch, EM_SETCUEBANNER, TRUE, (LPARAM)PT(P_SEARCH));
     PlFillCombo();
 }
@@ -645,8 +543,8 @@ static void PlUpdateVisibility(HWND hwnd)
     ShowWindow(g_hBtnUpdate, SW_SHOW);
     HWND adv[] = { g_hD3DDebugChk, g_hVerboseChk };
     for (HWND h : adv) if (h) ShowWindow(h, settingsPage && g_showAdvanced ? SW_SHOW : SW_HIDE);
-    HWND plc[] = { g_hPlNew, g_hPlRename, g_hPlDelete, g_hPlEnable, g_hPlShuffle, g_hPlVolume, g_hPlAddFiles, g_hPlAddFolder,
-                   g_hPlPlay, g_hPlStop, g_hPlNext, g_hPlSearch, g_hPlRemove };
+    HWND plc[] = { g_hPlNew, g_hPlRename, g_hPlDelete, g_hPlEnable, g_hPlShuffle, g_hPlAddFiles, g_hPlAddFolder,
+                   g_hPlSearch, g_hPlRemove };
     for (HWND h : plc) ShowWindow(h, p);
     ShowWindow(g_hPlCombo, pl && !g_plEditing ? SW_SHOW : SW_HIDE);
     ShowWindow(g_hPlNameEdit, pl && g_plEditing ? SW_SHOW : SW_HIDE);
@@ -734,45 +632,8 @@ static void PlDrawPanel(HDC hdc)
     SetTextColor(hdc, COLOR_TEXT_PRIMARY);
     TextOutW(hdc, X, 58, PT(P_PLAYLIST), (int)wcslen(PT(P_PLAYLIST)));
     if (g_plEditing) { RECT r = { X, 78, X + W, 110 }; FillRound(hdc, r, 8, COLOR_BG_INPUT, COLOR_ACCENT_ORANGE); }
-    wchar_t vol[64]; swprintf_s(vol, L"%ls  ·  %d%%", PT(P_VOLUME), g_config.musicVolume);
-    TextOutW(hdc, X, 222, vol, (int)wcslen(vol));
-
-    // preview card
-    RECT card = { X, 330, X + W, 458 };
-    FillRound(hdc, card, 10, COLOR_BG_INPUT, COLOR_BORDER);
-    SelectObject(hdc, g_hFontSmallCaps);
     SetTextColor(hdc, COLOR_TEXT_MUTED);
-    TextOutW(hdc, X + 12, 342, PT(P_PREVIEW), (int)wcslen(PT(P_PREVIEW)));
-    int idx = PlPreviewIndex();
-    RECT rt = { X + 12, 358, X + W - 12, 378 };
-    SelectObject(hdc, g_hFontUIBold);
-    SetTextColor(hdc, COLOR_TEXT_PRIMARY);
-    DrawTextW(hdc, idx >= 0 ? g_plTracks[idx].title.c_str() : PT(P_NOTHING), -1, &rt, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-    if (idx >= 0)
-    {
-        RECT ra = { X + 12, 377, X + W - 12, 395 };
-        SelectObject(hdc, g_hFontUI);
-        SetTextColor(hdc, COLOR_TEXT_MUTED);
-        DrawTextW(hdc, g_plTracks[idx].artist.c_str(), -1, &ra, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-    }
-    // progress
-    double cur = 0, dur = 0;
-    if (g_plEngine && !g_plPreviewPath.empty()) { cur = g_plEngine->GetCurrentTime(); dur = g_plEngine->GetDuration(); }
-    if (!(dur > 0) || dur != dur || dur > 1e7) dur = 0;
-    RECT bar = { X + 12, 401, X + W - 12, 405 };
-    FillRound(hdc, bar, 4, RGB(50, 56, 66), RGB(50, 56, 66));
-    if (dur > 0)
-    {
-        RECT fill = bar; fill.right = bar.left + (LONG)((bar.right - bar.left) * min(1.0, cur / dur));
-        if (fill.right > fill.left + 2) FillRound(hdc, fill, 4, COLOR_ACCENT_ORANGE, COLOR_ACCENT_ORANGE);
-    }
-    std::wstring tm = FmtTime((int)cur) + L" / " + FmtTime((int)dur);
-    RECT rtm = { X + 160, 416, X + W - 12, 446 };
-    SelectObject(hdc, g_hFontUI);
-    SetTextColor(hdc, COLOR_TEXT_MUTED);
-    DrawTextW(hdc, tm.c_str(), -1, &rtm, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-
-    RECT note = { X, 470, X + W, 520 };
+    RECT note = { X, 278, X + W, 400 };
     DrawTextW(hdc, PT(P_GAME_NOTE), -1, &note, DT_LEFT | DT_WORDBREAK);
 }
 
@@ -786,56 +647,29 @@ static void PlDrawListItem(const DRAWITEMSTRUCT *di)
     HDC hdc = di->hDC;
     RECT r = di->rcItem;
     bool sel = (di->itemState & ODS_SELECTED) != 0;
-    bool playing = PlPreviewIndex() == t;
     HBRUSH b = CreateSolidBrush(sel ? RGB(48, 34, 28) : COLOR_BG_INPUT);
     FillRect(hdc, &r, b); DeleteObject(b);
-    if (sel || playing) { RECT acc = { r.left, r.top + 6, r.left + 3, r.bottom - 6 }; HBRUSH ab = CreateSolidBrush(COLOR_ACCENT_ORANGE); FillRect(hdc, &acc, ab); DeleteObject(ab); }
+    if (sel) { RECT acc = { r.left, r.top + 6, r.left + 3, r.bottom - 6 }; HBRUSH ab = CreateSolidBrush(COLOR_ACCENT_ORANGE); FillRect(hdc, &acc, ab); DeleteObject(ab); }
     RECT sep = { r.left + 12, r.bottom - 1, r.right - 12, r.bottom };
     HBRUSH sb = CreateSolidBrush(RGB(30, 34, 40)); FillRect(hdc, &sep, sb); DeleteObject(sb);
     SetBkMode(hdc, TRANSPARENT);
     wchar_t num[16]; swprintf_s(num, L"%d", t + 1);
     RECT rn = { r.left + 8, r.top, r.left + 40, r.bottom };
     SelectObject(hdc, g_hFontUI);
-    SetTextColor(hdc, playing ? COLOR_ACCENT_ORANGE : COLOR_TEXT_MUTED);
-    DrawTextW(hdc, playing ? L"♪" : num, -1, &rn, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    DrawTextW(hdc, num, -1, &rn, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     RECT rd = { r.right - 70, r.top, r.right - 12, r.top + 24 };
     SetTextColor(hdc, COLOR_TEXT_MUTED);
     if (tr.secs > 0) DrawTextW(hdc, FmtTime(tr.secs).c_str(), -1, &rd, DT_RIGHT | DT_BOTTOM | DT_SINGLELINE);
     RECT rt = { r.left + 52, r.top + 4, r.right - 76, r.top + 24 };
     SelectObject(hdc, g_hFontUIBold);
-    SetTextColor(hdc, playing ? RGB(255, 140, 90) : COLOR_TEXT_PRIMARY);
+    SetTextColor(hdc, COLOR_TEXT_PRIMARY);
     DrawTextW(hdc, tr.title.c_str(), -1, &rt, DT_LEFT | DT_BOTTOM | DT_SINGLELINE | DT_END_ELLIPSIS);
     std::wstring sub = tr.artist.empty() ? FileNameOf(tr.path) : tr.artist + L"  ·  " + FileNameOf(tr.path);
     RECT rs = { r.left + 52, r.top + 24, r.right - 12, r.bottom - 4 };
     SelectObject(hdc, g_hFontUI);
     SetTextColor(hdc, COLOR_TEXT_MUTED);
     DrawTextW(hdc, sub.c_str(), -1, &rs, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
-}
-
-// Volume slider custom draw: orange filled track + round knob.
-static LRESULT PlVolumeCustomDraw(NMCUSTOMDRAW *cd)
-{
-    if (cd->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
-    if (cd->dwDrawStage != CDDS_ITEMPREPAINT) return CDRF_DODEFAULT;
-    if (cd->dwItemSpec == TBCD_CHANNEL)
-    {
-        RECT full; GetClientRect(cd->hdr.hwndFrom, &full);
-        HBRUSH bg = CreateSolidBrush(COLOR_BG_CARD); FillRect(cd->hdc, &full, bg); DeleteObject(bg);
-        RECT ch = cd->rc; int mid = (ch.top + ch.bottom) / 2; ch.top = mid - 2; ch.bottom = mid + 2;
-        FillRound(cd->hdc, ch, 4, RGB(58, 64, 74), RGB(58, 64, 74));
-        RECT thumb; SendMessageW(cd->hdr.hwndFrom, TBM_GETTHUMBRECT, 0, (LPARAM)&thumb);
-        RECT on = ch; on.right = (thumb.left + thumb.right) / 2;
-        if (on.right > on.left + 2) FillRound(cd->hdc, on, 4, COLOR_ACCENT_ORANGE, COLOR_ACCENT_ORANGE);
-        return CDRF_SKIPDEFAULT;
-    }
-    if (cd->dwItemSpec == TBCD_THUMB)
-    {
-        RECT t = cd->rc; int cx = (t.left + t.right) / 2, cy = (t.top + t.bottom) / 2;
-        RECT k = { cx - 8, cy - 8, cx + 8, cy + 8 };
-        FillRound(cd->hdc, k, 16, RGB(245, 245, 245), COLOR_ACCENT_ORANGE);
-        return CDRF_SKIPDEFAULT;
-    }
-    return CDRF_SKIPDEFAULT;
 }
 
 // Returns true when the message was handled (result in *res).
@@ -862,15 +696,11 @@ static bool PlHandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, L
             DrawInsert(hwnd, dl->hWnd, -1);
             if (at >= 0 && g_plDragFrom >= 0 && at != g_plDragFrom && at != g_plDragFrom + 1)
             {
-                int playingRow = PlPreviewIndex();
                 PlTrack t = g_plTracks[g_plDragFrom];
                 g_plTracks.erase(g_plTracks.begin() + g_plDragFrom);
                 int to = at > g_plDragFrom ? at - 1 : at;
                 if (to > (int)g_plTracks.size()) to = (int)g_plTracks.size();
                 g_plTracks.insert(g_plTracks.begin() + to, t);
-                if (playingRow == g_plDragFrom) g_plPreviewIdx = to;
-                else if (playingRow > g_plDragFrom && playingRow <= to) g_plPreviewIdx = playingRow - 1;
-                else if (playingRow < g_plDragFrom && playingRow >= to) g_plPreviewIdx = playingRow + 1;
                 PlSave(); PlRefreshList();
                 SendMessageW(g_hPlList, LB_SETCURSEL, to, 0);
             }
@@ -901,36 +731,9 @@ static bool PlHandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, L
         {
             int row = (int)SendMessageW(g_hPlList, LB_GETCURSEL, 0, 0);
             if (LOWORD(wParam) == VK_DELETE) { PlRemoveRow(row); *res = -2; return true; }
-            if (LOWORD(wParam) == VK_RETURN && row >= 0) { PlPreviewPlay(g_plView[row]); PlApplyLanguage(); InvalidateRect(hwnd, nullptr, FALSE); *res = -2; return true; }
             *res = -1; return true;
         }
         return false;
-    case WM_HSCROLL:
-        if ((HWND)lParam == g_hPlVolume)
-        {
-            g_config.musicVolume = (int)SendMessageW(g_hPlVolume, TBM_GETPOS, 0, 0);
-            PlPreviewVolume();
-            RECT r = { UI_PANEL_X, 218, UI_PANEL_X + UI_PANEL_W, 240 }; InvalidateRect(hwnd, &r, FALSE);
-            if (LOWORD(wParam) == TB_ENDTRACK || LOWORD(wParam) == TB_THUMBPOSITION) SaveIni();
-            *res = 0; return true;
-        }
-        return false;
-    case WM_NOTIFY:
-    {
-        NMHDR *nh = (NMHDR *)lParam;
-        if (nh->hwndFrom == g_hPlVolume && nh->code == NM_CUSTOMDRAW) { *res = PlVolumeCustomDraw((NMCUSTOMDRAW *)lParam); return true; }
-        return false;
-    }
-    case WM_TIMER:
-        if (wParam == PL_TIMER_ID) { RECT r = { UI_PANEL_X, 395, UI_PANEL_X + UI_PANEL_W, 450 }; InvalidateRect(hwnd, &r, FALSE); *res = 0; return true; }
-        return false;
-    case WM_PL_PREVIEW_EVENT:
-        if (wParam == MF_MEDIA_ENGINE_EVENT_ENDED) PlPreviewNext();
-        else if (wParam == MF_MEDIA_ENGINE_EVENT_ERROR) PlPreviewStop();
-        PlApplyLanguage();
-        InvalidateRect(g_hPlList, nullptr, FALSE);
-        InvalidateRect(hwnd, nullptr, FALSE);
-        *res = 0; return true;
     case WM_COMMAND:
     {
         int id = LOWORD(wParam), code = HIWORD(wParam);
@@ -946,7 +749,6 @@ static bool PlHandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, L
         case ID_PL_COMBO:
             if (code == CBN_SELCHANGE && !g_plNames.empty())
             {
-                PlPreviewStop();
                 PlSelect((int)SendMessageW(g_hPlCombo, CB_GETCURSEL, 0, 0));
                 SaveIni();
             }
@@ -962,26 +764,6 @@ static bool PlHandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, L
         case ID_PL_ADDFOLDER: PlPickFiles(hwnd, true); *res = 0; return true;
         case ID_PL_REMOVE: PlRemoveRow((int)SendMessageW(g_hPlList, LB_GETCURSEL, 0, 0)); *res = 0; return true;
         case ID_PL_SEARCH: if (code == EN_CHANGE) PlRefreshList(); *res = 0; return true;
-        case ID_PL_LIST:
-            if (code == LBN_DBLCLK)
-            {
-                int row = (int)SendMessageW(g_hPlList, LB_GETCURSEL, 0, 0);
-                if (row >= 0) PlPreviewPlay(g_plView[row]);
-                PlApplyLanguage(); InvalidateRect(g_hPlList, nullptr, FALSE); InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            *res = 0; return true;
-        case ID_PL_PLAY:
-            if (g_plPreviewPath.empty())
-            {
-                int row = (int)SendMessageW(g_hPlList, LB_GETCURSEL, 0, 0);
-                PlPreviewPlay(row >= 0 ? g_plView[row] : (g_plView.empty() ? -1 : g_plView[0]));
-            }
-            else if (g_plPreviewPaused) { g_plEngine->Play(); g_plPreviewPaused = false; }
-            else { g_plEngine->Pause(); g_plPreviewPaused = true; }
-            PlApplyLanguage(); InvalidateRect(g_hPlList, nullptr, FALSE); InvalidateRect(hwnd, nullptr, FALSE);
-            *res = 0; return true;
-        case ID_PL_STOP: PlPreviewStop(); PlApplyLanguage(); InvalidateRect(g_hPlList, nullptr, FALSE); InvalidateRect(hwnd, nullptr, FALSE); *res = 0; return true;
-        case ID_PL_NEXT: PlPreviewNext(); PlApplyLanguage(); InvalidateRect(g_hPlList, nullptr, FALSE); InvalidateRect(hwnd, nullptr, FALSE); *res = 0; return true;
         }
         return false;
     }
@@ -989,7 +771,3 @@ static bool PlHandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, L
     return false;
 }
 
-static void PlShutdown()
-{
-    if (g_plEngine) { g_plEngine->Shutdown(); g_plEngine->Release(); g_plEngine = nullptr; MFShutdown(); }
-}
