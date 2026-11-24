@@ -96,34 +96,54 @@ static HMODULE LoadBeside(const wchar_t* name) {
 }
 
 // ---- The game's device keeps the bridge's Xbox-layout vtable, and D3D12 hands that same object back to anyone
-// who asks a resource or command list for its device. The upscaler libraries do, and their desktop calls would
-// then land in the Xbox translations (GetResourceAllocationInfo crashed inside FSR's context creation, and from
-// slot 44 on the layouts differ). So every translated slot gets a small router: a caller inside the game's own
-// modules (the exe and the DLLs in its folder: the Xbox code and this bridge) reaches the translation, any
-// other caller (system, driver, AMD and NVIDIA libraries) the real D3D12 function.
+// who asks a resource, queue or command list for its device: the upscaler libraries, and overlays that draw
+// through D3D11On12 (a player's game crashed in d3d11on12.dll on reaching the main menu: its descriptor heaps
+// got the Xbox handle ABI). Their desktop calls must not land in the Xbox translations (from slot 44 on the
+// layouts even differ). So every translated slot gets a small router, installed as soon as the device is
+// wrapped: a caller inside the game's own modules (the exe and the DLLs in its folder: the Xbox code and this
+// bridge) reaches the translation, any other caller (system, driver, overlays, AMD and NVIDIA libraries) the
+// real D3D12 function.
 struct Range { uintptr_t lo, hi; };
-static Range g_xboxCallers[40] = {};   // ends at lo == 0
+static Range g_xboxCallers[64] = {};   // ends at lo == 0; only appended to
+static volatile LONG g_xboxCallerN = 0;
+static SRWLOCK g_scanLock = SRWLOCK_INIT;
 
 static bool IsVendorDll(const wchar_t* name) {
   return _wcsnicmp(name, L"amd_fidelityfx", 14) == 0 || _wcsnicmp(name, L"nvngx", 5) == 0 || _wcsicmp(name, L"rl_dlss.dll") == 0;
 }
 
+// Adds the game-folder modules loaded since the last scan (the table is read lock-free by the routers: an entry
+// becomes visible when its lo is written, after its hi).
+static void ScanGameModules() {
+  AcquireSRWLockExclusive(&g_scanLock);
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
+  if (snap != INVALID_HANDLE_VALUE) {
+    const wchar_t* dir = ModuleDir(); const size_t dirLen = wcslen(dir);
+    MODULEENTRY32W me = {}; me.dwSize = sizeof(me);
+    for (BOOL ok = Module32FirstW(snap, &me); ok; ok = Module32NextW(snap, &me)) {
+      if (_wcsnicmp(me.szExePath, dir, dirLen) != 0 || (me.szExePath[dirLen] != L'\\' && me.szExePath[dirLen] != L'/')) continue;
+      if (IsVendorDll(me.szModule)) continue;
+      const uintptr_t lo = (uintptr_t)me.modBaseAddr, hi = lo + me.modBaseSize;
+      bool known = false;
+      for (LONG k = 0; k < g_xboxCallerN; ++k) if (g_xboxCallers[k].lo == lo) known = true;
+      if (known || g_xboxCallerN >= (LONG)_countof(g_xboxCallers) - 1) continue;
+      Range& r = g_xboxCallers[g_xboxCallerN];
+      r.hi = hi; MemoryBarrier(); *(volatile uintptr_t*)&r.lo = lo;
+      ++g_xboxCallerN;
+      log_line("[route] game module %ls\r\n", me.szModule);
+    }
+    CloseHandle(snap);
+  }
+  ReleaseSRWLockExclusive(&g_scanLock);
+}
+
 static void RouteForeignDeviceCalls() {
+  static volatile LONG s_done = 0;
+  if (InterlockedExchange(&s_done, 1)) { ScanGameModules(); return; }   // later calls: pick up new game modules
   void** orig = psodc::g_origDevVtbl;
   if (!orig) return;
-  // the modules that call the device with the Xbox layout: everything loaded from the game's folder
-  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
-  if (snap == INVALID_HANDLE_VALUE) { log_line("[ups] module list unavailable: device calls not routed\r\n"); return; }
-  const wchar_t* dir = ModuleDir(); const size_t dirLen = wcslen(dir);
-  int n = 0;
-  MODULEENTRY32W me = {}; me.dwSize = sizeof(me);
-  for (BOOL ok = Module32FirstW(snap, &me); ok && n < (int)_countof(g_xboxCallers) - 1; ok = Module32NextW(snap, &me)) {
-    if (_wcsnicmp(me.szExePath, dir, dirLen) != 0 || (me.szExePath[dirLen] != L'\\' && me.szExePath[dirLen] != L'/')) continue;
-    if (IsVendorDll(me.szModule)) continue;
-    g_xboxCallers[n].lo = (uintptr_t)me.modBaseAddr; g_xboxCallers[n].hi = (uintptr_t)me.modBaseAddr + me.modBaseSize; ++n;
-  }
-  CloseHandle(snap);
-  if (n == 0) { log_line("[ups] no game modules found: device calls not routed\r\n"); return; }
+  ScanGameModules();
+  if (g_xboxCallerN == 0) { log_line("[route] no game modules found: device calls not routed\r\n"); return; }
   // only the slots the desktop device has (past its end the wrapped table holds Xbox-only entries)
   int valid = 0;
   for (; valid < 256; ++valid) {
@@ -134,7 +154,7 @@ static void RouteForeignDeviceCalls() {
   for (int i = 0; i < valid; ++i) if (g_WrappedDeviceVtable[i] != orig[i]) ++slots;
   uint8_t* code = (uint8_t*)AllocateNearAddress((void*)&RouteForeignDeviceCalls, (size_t)slots * 64);
   DWORD old = 0;
-  if (!code || !VirtualProtect(code, (size_t)slots * 64, PAGE_EXECUTE_READWRITE, &old)) { log_line("[ups] router memory failed\r\n"); return; }
+  if (!code || !VirtualProtect(code, (size_t)slots * 64, PAGE_EXECUTE_READWRITE, &old)) { log_line("[route] router memory failed\r\n"); return; }
   uint8_t* q = code;
   for (int i = 0; i < valid; ++i) {
     void* hook = g_WrappedDeviceVtable[i];
@@ -162,7 +182,7 @@ static void RouteForeignDeviceCalls() {
     InterlockedExchangePointer(&g_WrappedDeviceVtable[i], q);
     q += 64;
   }
-  log_line("[ups] %d of %d device slots routed by caller (%d game modules)\r\n", slots, valid, n);
+  log_line("[route] %d of %d device slots routed by caller (%ld game modules)\r\n", slots, valid, (long)g_xboxCallerN);
 }
 
 // ---- What this machine can run (checked once, the first time the menu or a frame needs it).
@@ -228,7 +248,7 @@ static bool Probe() {
     while (c.state != 2) Sleep(1);   // another thread is checking
     return true;
   }
-  RouteForeignDeviceCalls();   // before any upscaler library is loaded
+  RouteForeignDeviceCalls();   // (installed when the device was wrapped) game modules loaded since then
   ProbeFsr(dev);
   ProbeDlss(dev);
   InterlockedExchange(&c.state, 2);

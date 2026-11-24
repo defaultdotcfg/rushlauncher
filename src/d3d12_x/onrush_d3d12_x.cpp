@@ -11219,6 +11219,8 @@ EXTERN_C HRESULT WINAPI OnRushD3D12XboxCreateDevice(void *pAdapter,
     *(void ***)(*ppDevice) = g_WrappedDeviceVtable;
     log_line("[d3d12_x] Wrapped D3D12 device vtable (intercepted 9, 14, 20, 25, "
              "26, 41, 44, 48, 60, 61, 62, 73, real slots populated)\r\n");
+    // desktop callers (overlays via D3D11On12, upscaler libraries) skip the Xbox translations
+    ups::RouteForeignDeviceCalls();
   }
 
   return hr;
