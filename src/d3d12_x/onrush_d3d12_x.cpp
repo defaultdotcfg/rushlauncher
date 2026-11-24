@@ -11034,6 +11034,41 @@ static HRESULT STDMETHODCALLTYPE HookedCreateCommandListX(
   return hr;
 }
 
+// One line about the GPU the game runs on (for player reports): adapter, driver, shader model and the wave
+// sizes the driver may use (the translated shaders come from 64-lane GCN code; PC GPUs run 32 or 64 lanes).
+static void LogGpuInfo(ID3D12Device *dev) {
+  const LUID luid = dev->GetAdapterLuid();
+  wchar_t name[128] = L"?";
+  unsigned vendor = 0, deviceId = 0;
+  unsigned long long vramMb = 0;
+  LARGE_INTEGER umd = {};
+  typedef HRESULT(WINAPI * PFN_F1)(REFIID, void **);
+  HMODULE dxgi = GetModuleHandleW(L"dxgi.dll");
+  PFN_F1 create = dxgi ? (PFN_F1)GetProcAddress(dxgi, "CreateDXGIFactory1") : nullptr;
+  IDXGIFactory1 *f = nullptr;
+  if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&f)) && f) {
+    IDXGIAdapter1 *a = nullptr;
+    for (UINT i = 0; f->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i, a->Release()) {
+      DXGI_ADAPTER_DESC1 d = {};
+      if (FAILED(a->GetDesc1(&d)) || d.AdapterLuid.LowPart != luid.LowPart || d.AdapterLuid.HighPart != luid.HighPart) continue;
+      wcsncpy_s(name, d.Description, _TRUNCATE);
+      vendor = d.VendorId; deviceId = d.DeviceId; vramMb = d.DedicatedVideoMemory >> 20;
+      a->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd);
+      a->Release();
+      break;
+    }
+    f->Release();
+  }
+  D3D12_FEATURE_DATA_D3D12_OPTIONS1 o1 = {};
+  dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &o1, sizeof(o1));
+  D3D12_FEATURE_DATA_SHADER_MODEL sm = {D3D_SHADER_MODEL_6_6};
+  if (FAILED(dev->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm)))) sm.HighestShaderModel = (D3D_SHADER_MODEL)0;
+  log_line("[gpu] %ls (vendor %04X device %04X, %llu MB) driver %u.%u.%u.%u | shader model %u.%u, waves %u-%u lanes\r\n", name, vendor,
+           deviceId, vramMb, (unsigned)HIWORD(umd.HighPart), (unsigned)LOWORD(umd.HighPart), (unsigned)HIWORD(umd.LowPart),
+           (unsigned)LOWORD(umd.LowPart), (unsigned)sm.HighestShaderModel >> 4, (unsigned)sm.HighestShaderModel & 0xF,
+           o1.WaveLaneCountMin, o1.WaveLaneCountMax);
+}
+
 EXTERN_C HRESULT WINAPI OnRushD3D12XboxCreateDevice(void *pAdapter,
                                                     const void *pParameters,
                                                     const IID *riid,
@@ -11129,6 +11164,7 @@ EXTERN_C HRESULT WINAPI OnRushD3D12XboxCreateDevice(void *pAdapter,
   if (SUCCEEDED(hr) && ppDevice && *ppDevice) {
     g_pMainDevice = static_cast<ID3D12Device *>(*ppDevice);
     if (g_pMainDevice) {
+      LogGpuInfo(g_pMainDevice);
       HRESULT iqHr = g_pMainDevice->QueryInterface(__uuidof(ID3D12InfoQueue),
                                                    (void **)&g_pD3D12InfoQueue);
       log_line("[d3d12_x] Device QueryInterface(ID3D12InfoQueue) -> "
