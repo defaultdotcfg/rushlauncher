@@ -273,6 +273,65 @@ static bool Scan(BridgeCommandList* self, char kind, UINT64 hash, UINT64 vs, ID3
   return true;
 }
 
+// ---- Small UAV buffers (up to 256 bytes): the game's per-frame GPU values, among them the auto exposure and
+// the white balance. A scene that saturates everywhere at once points at one of them, and the texture scans
+// cannot see buffers, so in each measured frame they are copied (at the TAA pass, on the game's list) and logged
+// as floats. Tracked when the game creates a UAV on them; a reference is kept so the copy never reads a freed one.
+static const int kSmallMax = 32, kSmallSlots = 64; static const UINT kSmallBytes = 256;
+struct Small { ID3D12Resource* res; UINT size; };
+static Small g_small[kSmallMax]; static volatile LONG g_smallN = 0; static SRWLOCK g_smallLock = SRWLOCK_INIT;
+static ID3D12Resource* g_smallRb = nullptr; static const volatile UINT8* g_smallMem = nullptr; static bool g_smallTried = false;
+static LONG g_smallFrom[kSmallSlots]; static LONG g_smallCount[kSmallSlots]; static LONG g_smallDone = 0;
+
+static void TrackSmall(ID3D12Resource* res) {
+  if (!res) return;
+  D3D12_RESOURCE_DESC rd = {};
+  __try { rd = res->GetDesc(); } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+  if (rd.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || rd.Width > kSmallBytes || !(rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) return;
+  AcquireSRWLockExclusive(&g_smallLock);
+  LONG n = g_smallN; bool seen = false;
+  for (LONG i = 0; i < n; ++i) if (g_small[i].res == res) seen = true;
+  if (!seen && n < kSmallMax) { res->AddRef(); g_small[n] = { res, (UINT)rd.Width }; g_smallN = n + 1; }
+  ReleaseSRWLockExclusive(&g_smallLock);
+}
+
+static void CopySmall(BridgeCommandList* self) {
+  if (g_smallDone == g_measured) return;   // once per measured frame
+  g_smallDone = g_measured;
+  if (!g_smallTried) {
+    g_smallTried = true;
+    D3D12_RESOURCE_DESC bd = {}; bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width = (UINT64)kSmallSlots * kSmallMax * kSmallBytes; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1;
+    bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+    void* m = nullptr; D3D12_RANGE rr = { 0, (SIZE_T)bd.Width };
+    if (FAILED(ups::Dev()->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_smallRb))) || FAILED(g_smallRb->Map(0, &rr, &m)) || !m) {
+      log_line("[diag] small buffer readback failed" "\r\n"); return; }
+    g_smallMem = (const volatile UINT8*)m;
+  }
+  if (!g_smallMem) return;
+  const int slot = g_measured % kSmallSlots;
+  AcquireSRWLockShared(&g_smallLock); const LONG n = g_smallN; Small list[kSmallMax]; memcpy(list, g_small, sizeof(list)); ReleaseSRWLockShared(&g_smallLock);
+  for (LONG i = 0; i < n; ++i) {
+    const D3D12_RESOURCE_STATES was = ListCurrentState(self, list[i].res);
+    ListEnsureState(self, list[i].res, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    self->m_pRealCmdList->CopyBufferRegion(g_smallRb, ((UINT64)slot * kSmallMax + i) * kSmallBytes, list[i].res, 0, list[i].size);
+    ListEnsureState(self, list[i].res, was);
+  }
+  g_smallFrom[slot] = g_measured; g_smallCount[slot] = n;
+}
+
+static void ReportSmall(int index) {
+  const int slot = index % kSmallSlots;
+  if (!g_smallMem || g_smallFrom[slot] != index) return;
+  for (LONG i = 0; i < g_smallCount[slot]; ++i) {
+    char b[700]; int o = sprintf_s(b, "[diag] buffer pequeno %ld (%u bytes):", (long)i, g_small[i].size);
+    const volatile UINT8* q = g_smallMem + ((size_t)slot * kSmallMax + i) * kSmallBytes;
+    for (UINT k = 0; k + 4 <= g_small[i].size && k < 64 * 4 && o < (int)sizeof(b) - 24; k += 4) { UINT u = 0; for (int j = 0; j < 4; ++j) u |= (UINT)q[k + j] << (8 * j); float f; memcpy(&f, &u, 4); o += sprintf_s(b + o, sizeof(b) - o, " %.5g", f); }
+    sprintf_s(b + o, sizeof(b) - o, "\r\n");
+    log_line("%s", b);
+  }
+}
+
 static void Report(const Pending& p) {
   const LONG end = p.end < (LONG)kMaxRec ? p.end : (LONG)kMaxRec;
   int bad = 0, firstBad = -1, ran = 0;
@@ -299,6 +358,7 @@ static void Report(const Pending& p) {
                        (long)p.frame, p.index, ran, bad, sceneMax, sceneO1, sceneO16, end - p.first >= kMaxPerFrame ? " | limite de medições do quadro atingido" : "");
   else sprintf_s(b, "[diag] ---- quadro %ld (medição %d): %d passos medidos, %d com NaN/infinito\r\n", (long)p.frame, p.index, ran, bad);
   log_line("%s", b);
+  ReportSmall(p.index);
   if (!g_firstBadShown && firstBad >= 0) {
     g_firstBadShown = true;
     const Rec& q = g_rec[firstBad];
@@ -348,7 +408,7 @@ static void Diag_RecordRs(void* rs, const D3D12_ROOT_SIGNATURE_DESC* d) {
 static void Diag_AfterDispatch(BridgeCommandList* self) {
   using namespace gdiag;
   if (!On() || !self || !self->m_pRealCmdList) return;
-  if (ups::IsTaa()) g_lastTaa = g_rtLogFrame;
+  if (ups::IsTaa()) { g_lastTaa = g_rtLogFrame; if (Active()) CopySmall(self); }
   if (!Active() || !t_lastPso) return;
   const UINT64 hash = (UINT64)BcPsoHash(t_lastPso);
   const std::vector<TexDecl>& decls = Decls(hash);
@@ -420,3 +480,6 @@ static void Diag_OnPresent(LONG frame) {
   g_armStart = g_recN; ++g_measured; g_nextAt = frame + kEvery;
   InterlockedExchange(&g_arm, frame);
 }
+
+// Every UAV the game creates: small buffers are remembered (see TrackSmall).
+static void Diag_OnCreateUav(ID3D12Resource* res) { if (gdiag::On()) gdiag::TrackSmall(res); }

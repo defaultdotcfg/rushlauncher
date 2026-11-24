@@ -8822,9 +8822,11 @@ static void STDMETHODCALLTYPE HookedCreateDSV(ID3D12Device *This, ID3D12Resource
   if (dest.ptr > 0x10000) { AcquireSRWLockExclusive(&g_DsvLock); g_DsvMap[dest.ptr] = pRes; ReleaseSRWLockExclusive(&g_DsvLock); }
   if (g_TrueCreateDSV) g_TrueCreateDSV(This, pRes, pDesc, dest);
 }
+static void Diag_OnCreateUav(ID3D12Resource* res);   // diag.inc
 static void STDMETHODCALLTYPE HookedCreateUAV(ID3D12Device *This, ID3D12Resource *pRes, ID3D12Resource *pCounter, const D3D12_UNORDERED_ACCESS_VIEW_DESC *pDesc, D3D12_CPU_DESCRIPTOR_HANDLE dest) {
   if (pRes && dest.ptr > 0x10000)
     DescTrack_Set(dest.ptr, { pRes, pDesc ? pDesc->Format : DXGI_FORMAT_UNKNOWN, pDesc ? (UINT)pDesc->ViewDimension : 0, 2 });
+  Diag_OnCreateUav(pRes);
   { static volatile LONG s_nu = 0; static volatile LONG s_nuc = 0; LONG iu = InterlockedIncrement(&s_nu); if (pCounter) InterlockedIncrement(&s_nuc);
     if ((pCounter && s_nuc <= 40) || iu <= 8) log_line("[uav] #%ld res=%p counter=%p dim=%d fmt=%d first=%llu n=%u stride=%u counterOff=%llu\r\n", (long)iu, (void*)pRes, (void*)pCounter, pDesc ? (int)pDesc->ViewDimension : -1, pDesc ? (int)pDesc->Format : -1,
              pDesc ? (unsigned long long)pDesc->Buffer.FirstElement : 0ull, pDesc ? (UINT)pDesc->Buffer.NumElements : 0u, pDesc ? (UINT)pDesc->Buffer.StructureByteStride : 0u, pDesc ? (unsigned long long)pDesc->Buffer.CounterOffsetInBytes : 0ull); }
